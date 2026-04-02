@@ -87,6 +87,29 @@ const MEDIUM_TRUST_RETAILERS = new Set([
   'unicorn infosolutions',
   'unicorn store',
   'aptronix',
+  // Major Indian e-commerce platforms
+  'nykaa',
+  'nykaa.com',
+  'myntra',
+  'myntra.com',
+  'snapdeal',
+  'snapdeal.com',
+  'meesho',
+  'meesho.com',
+  'shopclues',
+  'shopclues.com',
+  'pepperfry',
+  'pepperfry.com',
+  'bigbasket',
+  'bigbasket.com',
+  'blinkit',
+  'blinkit.com',
+  'ajio',
+  'ajio.com',
+  'lenskart',
+  'lenskart.com',
+  'nykaa fashion',
+  'nykaa beauty',
 ]);
 
 const TRUSTED_RETAILER_DOMAINS = [
@@ -112,6 +135,13 @@ const TRUSTED_RETAILER_DOMAINS = [
   'nykaa.com',
   'myntra.com',
   'bigbasket.com',
+  'snapdeal.com',
+  'meesho.com',
+  'shopclues.com',
+  'pepperfry.com',
+  'blinkit.com',
+  'ajio.com',
+  'lenskart.com',
 ];
 
 // Denylist: known scam/fake/grey-market sellers – these are BLOCKED regardless of trust score
@@ -224,6 +254,55 @@ const OFFICIAL_RECOVERY_TARGETS = [
     serpapiStoreAliases: ['vijay sales', 'vijaysales.com'],
     retailerHint: 'vijay sales',
   },
+  {
+    retailer: 'Snapdeal',
+    site: 'www.snapdeal.com',
+    trust: 78,
+    serpapiStoreAliases: ['snapdeal', 'snapdeal.com'],
+    retailerHint: 'snapdeal',
+  },
+  {
+    retailer: 'Meesho',
+    site: 'www.meesho.com',
+    trust: 75,
+    serpapiStoreAliases: ['meesho', 'meesho.com'],
+    retailerHint: 'meesho',
+  },
+  {
+    retailer: 'Nykaa',
+    site: 'www.nykaa.com',
+    trust: 80,
+    serpapiStoreAliases: ['nykaa', 'nykaa.com', 'nykaa fashion', 'nykaa beauty'],
+    retailerHint: 'nykaa',
+  },
+  {
+    retailer: 'Myntra',
+    site: 'www.myntra.com',
+    trust: 80,
+    serpapiStoreAliases: ['myntra', 'myntra.com'],
+    retailerHint: 'myntra',
+  },
+  {
+    retailer: 'ShopClues',
+    site: 'www.shopclues.com',
+    trust: 72,
+    serpapiStoreAliases: ['shopclues', 'shopclues.com'],
+    retailerHint: 'shopclues',
+  },
+  {
+    retailer: 'Tata Neu',
+    site: 'www.tataneu.com',
+    trust: 86,
+    serpapiStoreAliases: ['tata neu', 'tataneu', 'tataneu.com'],
+    retailerHint: 'tata neu',
+  },
+  {
+    retailer: 'Bajaj Finserv Markets',
+    site: 'www.bajajfinservmarkets.in',
+    trust: 82,
+    serpapiStoreAliases: ['bajaj finserv markets', 'bajajfinservmarkets.in', 'bajaj markets x ondc'],
+    retailerHint: 'bajaj finserv markets',
+  },
 ];
 
 const CORE_RETAILER_TARGETS = [
@@ -268,6 +347,42 @@ const CORE_RETAILER_TARGETS = [
     site: 'www.tatacliq.com',
     trust: 89,
     searchUrl: 'https://www.tatacliq.com/search/?searchCategory=all&text={query}',
+  },
+  {
+    retailer: 'Snapdeal',
+    site: 'www.snapdeal.com',
+    trust: 78,
+    searchUrl: 'https://www.snapdeal.com/search?keyword={query}',
+  },
+  {
+    retailer: 'Meesho',
+    site: 'www.meesho.com',
+    trust: 75,
+    searchUrl: 'https://www.meesho.com/search?q={query}',
+  },
+  {
+    retailer: 'Nykaa',
+    site: 'www.nykaa.com',
+    trust: 80,
+    searchUrl: 'https://www.nykaa.com/search/result/?q={query}',
+  },
+  {
+    retailer: 'Myntra',
+    site: 'www.myntra.com',
+    trust: 80,
+    searchUrl: 'https://www.myntra.com/{query}',
+  },
+  {
+    retailer: 'Tata Neu',
+    site: 'www.tataneu.com',
+    trust: 86,
+    searchUrl: 'https://www.tataneu.com/search?q={query}',
+  },
+  {
+    retailer: 'Bajaj Finserv Markets',
+    site: 'www.bajajfinservmarkets.in',
+    trust: 82,
+    searchUrl: 'https://www.bajajfinservmarkets.in/search?q={query}',
   },
 ];
 
@@ -820,7 +935,7 @@ app.get('/api/search', async (req, res) => {
 
   const [serpResult, ...scraperResults] = await Promise.allSettled([
     withTimeout(async () => {
-      const url = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&api_key=${API_KEY}&gl=in&hl=en`;
+      const url = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&api_key=${API_KEY}&gl=in&hl=en&num=20`;
       return await fetchJsonWithTimeout(url, MAIN_SERPAPI_TIMEOUT_MS);
     }, MAIN_SERPAPI_TIMEOUT_MS, {}),
     ...scraperTasks.map(([name, task]) => withTimeout(() => task.catch((err) => {
@@ -898,10 +1013,10 @@ app.get('/api/search', async (req, res) => {
       const store = item.source || fallbackStore;
       const name = item.title || query;
       const directUrl = item.link || item.product_link || '';
-      const trustedRetailer = isKnownTrustedRetailer(store, directUrl);
 
       // Block: no price, blocked seller, fake listing title, or irrelevant product
-      if (!priceStr || isBlockedRetailer(store) || isLowQualityListing(name) || !isRelevantProduct(name, query) || !trustedRetailer) {
+      // Note: we allow any non-blocked retailer through – trust scoring handles ranking
+      if (!priceStr || isBlockedRetailer(store) || isLowQualityListing(name) || !isRelevantProduct(name, query)) {
         return;
       }
 

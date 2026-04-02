@@ -12,37 +12,17 @@ import { scrapeTataCliq } from './services/scrapers/tataCliq.js';
 import { isRelevantProduct } from './services/scrapers/helpers.js';
 import { searchSiteProductUrl } from './services/scrapers/siteSearch.js';
 import { withRetailerPage } from './services/scrapers/browser.js';
+import { getCachedResult, setCachedResult } from './services/cache.js';
+import { savePriceSnapshots, getPriceHistory } from './services/priceHistory.js';
+import { createAlert, getAlerts, deleteAlert } from './services/priceAlerts.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const redirectTargets = new Map();
 const immersiveStoreCache = new Map();
-const queryResultCache = new Map();
-
-const QUERY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:4173'] }));
 app.use(express.json());
-
-function getCachedQueryResult(query) {
-  const key = String(query || '').trim().toLowerCase();
-  const cached = queryResultCache.get(key);
-  if (!cached) return null;
-  if (Date.now() - cached.cachedAt > QUERY_CACHE_TTL_MS) {
-    queryResultCache.delete(key);
-    return null;
-  }
-  return cached.payload;
-}
-
-function setCachedQueryResult(query, payload) {
-  const key = String(query || '').trim().toLowerCase();
-  if (!key) return;
-  queryResultCache.set(key, {
-    cachedAt: Date.now(),
-    payload,
-  });
-}
 
 const HIGH_TRUST_RETAILERS = new Set([
   'amazon',
@@ -623,73 +603,40 @@ function buildRetailerSearchUrl(template, query) {
   return String(template || '').replace('{query}', encodedQuery);
 }
 
-function computeTrustFactor({ store, url, rating, reviews, source, name }) {
-  const normalizedStore = (store || '').toLowerCase().trim();
-  const normalizedName = (name || '').toLowerCase();
-  const normalizedUrl = (url || '').toLowerCase();
-  const knownTrustedRetailer = isKnownTrustedRetailer(store, url);
-
-  let score = 50;
-
-  if (source === 'scraper') score += 18;
-  if (HIGH_TRUST_RETAILERS.has(normalizedStore)) score += 24;
-  if (MEDIUM_TRUST_RETAILERS.has(normalizedStore)) score += 12;
-
-  if (normalizedUrl.includes('amazon.')) score += 18;
-  if (normalizedUrl.includes('flipkart.')) score += 18;
-  if (normalizedUrl.includes('croma.')) score += 12;
-  if (normalizedUrl.includes('reliancedigital.')) score += 12;
-  if (normalizedUrl.includes('jiomart.')) score += 10;
-  if (normalizedUrl.includes('vijaysales.')) score += 10;
-  if (normalizedUrl.includes('tatacliq.')) score += 10;
-  if (normalizedUrl.includes('tataneu.')) score += 10;
-  if (normalizedUrl.includes('apple.com')) score += 18;
-  if (normalizedUrl.includes('samsung.com')) score += 16;
-  if (normalizedUrl.includes('mi.com') || normalizedUrl.includes('xiaomi.com')) score += 14;
-  if (normalizedUrl.includes('oneplus.in')) score += 14;
-  if (normalizedUrl.includes('poorvika.')) score += 8;
-  if (normalizedUrl.includes('sangeethashop.')) score += 8;
-  if (normalizedUrl.includes('lotmobiles.')) score += 8;
-  if (normalizedUrl.includes('bajajfinservmarkets.')) score += 8;
-  if (normalizedUrl.includes('paytmmall.')) score += 6;
-  if (normalizedUrl.includes('bigbasket.')) score += 6;
-  if (normalizedUrl.includes('google.com/search?ibp=oshop')) score -= 6;
-
-  if (rating >= 4.5) score += 8;
-  else if (rating >= 4) score += 5;
-  else if (rating > 0) score += 2;
-
-  if (reviews >= 10000) score += 8;
-  else if (reviews >= 1000) score += 6;
-  else if (reviews >= 100) score += 4;
-  else if (reviews >= 10) score += 2;
-
-  if (normalizedStore.includes('unknown')) score -= 8;
-  if (normalizedStore.includes('sponsored')) score -= 6;
-  if (source === 'serpapi' && !knownTrustedRetailer) score -= 28;
-
-  if (/(renewed|refurbished|open box|open-box|pre-owned|preowned|used|second hand|second-hand|fair grade|good grade|tested & verified)/.test(normalizedName)) {
-    score -= 20;
-  }
-
-  return clampScore(score);
+function computeTrustFactor({ store, url, rating, reviews, source, name, returnDays = 0, isOfficialStore = false }) {
+  // ── Weighted Trust Score (never hardcoded) ──
+  // Seller Rating: 40% (0-40)
+  const ratingScore = rating >= 4.5 ? 40 : rating >= 4 ? 32 : rating >= 3.5 ? 24 : rating >= 3 ? 16 : rating > 0 ? 8 : 20;
+  // Review Count: 20% (0-20)
+  const reviewScore = reviews >= 10000 ? 20 : reviews >= 1000 ? 16 : reviews >= 100 ? 12 : reviews >= 10 ? 8 : reviews > 0 ? 4 : 10;
+  // Return Policy: 20% (0-20)
+  const returnScore = returnDays >= 30 ? 20 : returnDays >= 14 ? 16 : returnDays >= 7 ? 12 : returnDays > 0 ? 8 : isKnownTrustedRetailer(store, url) ? 14 : 4;
+  // Official Store: 20% (0-20)
+  const ns = normalizeStoreName(store);
+  const officialScore = isOfficialStore ? 20 : HIGH_TRUST_RETAILERS.has(ns) ? 18 : MEDIUM_TRUST_RETAILERS.has(ns) ? 14 : urlMatchesTrustedRetailerDomain(url) ? 12 : 4;
+  // Penalties
+  let penalty = 0;
+  if (ns.includes('unknown')) penalty += 15;
+  if (ns.includes('sponsored')) penalty += 10;
+  if (BLOCKED_RETAILERS.has(ns)) penalty += 40;
+  if (FAKE_LISTING_KEYWORDS.test(name || '')) penalty += 20;
+  return clampScore(ratingScore + reviewScore + returnScore + officialScore - penalty);
 }
 
-function createRetailerEntry({ name, price, store, rating, reviews, url, image, source, searchOnly = false, unavailableReason = '' }) {
-  const trustScore = computeTrustFactor({ store, url, rating, reviews, source, name });
+function createRetailerEntry({ name, price, store, rating, reviews, url, image, source, searchOnly = false, unavailableReason = '', stockStatus = 'Check Site', deliveryDate = 'Check on site', sellerName = '', isOfficialStore = false, couponText = '', returnDays = 0 }) {
+  const resolvedSeller = sellerName || store || 'Unknown';
+  const resolvedOfficial = isOfficialStore || HIGH_TRUST_RETAILERS.has(normalizeStoreName(store));
+  const trustScore = computeTrustFactor({ store, url, rating, reviews, source, name, returnDays, isOfficialStore: resolvedOfficial });
   return {
-    name,
-    price,
-    store,
-    rating,
-    reviews,
-    url,
-    image,
-    source,
-    trustScore,
+    name, price, store, rating, reviews, url, image, source, trustScore,
     trustLabel: getTrustLabel(trustScore),
-    searchOnly,
-    unavailableReason,
+    searchOnly, unavailableReason,
+    stockStatus: stockStatus || 'Check Site',
+    deliveryDate: deliveryDate || 'Check on site',
+    sellerName: resolvedSeller,
+    isOfficialStore: resolvedOfficial,
+    couponText: couponText || '',
+    returnDays: returnDays || 0,
   };
 }
 
@@ -835,6 +782,12 @@ function normalizeScraperResult(result) {
     source: 'scraper',
     searchOnly: Boolean(result.search_only) || !hasNumericPrice,
     unavailableReason: !hasNumericPrice ? 'Live price unavailable right now' : '',
+    stockStatus: result.stock_status || (hasNumericPrice ? 'In Stock' : 'Check Site'),
+    deliveryDate: result.delivery_date || 'Check on site',
+    sellerName: result.seller_name || result.retailer || 'Unknown',
+    isOfficialStore: Boolean(result.is_official),
+    couponText: Array.isArray(result.coupons) ? result.coupons.join(', ') : (result.coupons || ''),
+    returnDays: result.return_days || 0,
   });
 }
 
@@ -843,12 +796,9 @@ app.get('/api/search', async (req, res) => {
   const query = (req.query.q || '').trim();
   if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
 
-  const cachedPayload = getCachedQueryResult(query);
+  const cachedPayload = await getCachedResult(query);
   if (cachedPayload) {
-    return res.json({
-      ...cachedPayload,
-      cached: true,
-    });
+    return res.json(cachedPayload);
   }
 
   const API_KEY = process.env.SERPAPI_API_KEY;

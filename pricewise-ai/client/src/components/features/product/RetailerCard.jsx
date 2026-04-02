@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Star, Award } from 'lucide-react';
+import { ExternalLink, Star, Award, Package, Truck, ShieldCheck, Tag } from 'lucide-react';
 import { motion } from 'framer-motion';
 import TrustScore from '../pricing/TrustScore';
 
@@ -11,14 +11,32 @@ function buildInlineImageFallback(label) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+function getStockColor(status) {
+  const s = (status || '').toLowerCase();
+  if (s.includes('in stock')) return 'bg-emerald-500';
+  if (s.includes('limited')) return 'bg-yellow-500';
+  if (s.includes('out')) return 'bg-red-500';
+  return 'bg-neutral-500';
+}
+
+function getStockText(status) {
+  const s = (status || '').toLowerCase();
+  if (s.includes('in stock')) return 'In Stock';
+  if (s.includes('limited')) return 'Limited Stock';
+  if (s.includes('out')) return 'Out of Stock';
+  return 'Check Site';
+}
+
 const RetailerCard = ({ retailer, isBestDeal }) => {
+  const actualBestDeal = retailer?.isBestDeal ?? isBestDeal;
+  const priceDiff = retailer?.priceDifference;
+  const priceDiffText = retailer?.priceDifferenceText;
+
   const imageSources = useMemo(() => {
     const label = retailer?.name || retailer?.store || 'Product';
-    const namedFallback = `https://picsum.photos/seed/${encodeURIComponent(label)}/320/320`;
     return [
       retailer?.image,
       ...(Array.isArray(retailer?.imageFallbacks) ? retailer.imageFallbacks : []),
-      namedFallback,
       PRODUCT_FALLBACK_IMAGE,
       buildInlineImageFallback(label),
     ].filter(Boolean);
@@ -31,40 +49,47 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
   }, [retailer?.image, retailer?.name, retailer?.store]);
 
   const handleImageError = () => {
-    setImageIndex((prev) => {
-      if (prev >= imageSources.length - 1) return prev;
-      return prev + 1;
-    });
+    setImageIndex((prev) => (prev >= imageSources.length - 1 ? prev : prev + 1));
   };
 
-  const isUnavailable = Boolean(retailer?.isUnavailable);
+  const isUnavailable = Boolean(retailer?.isUnavailable || retailer?.searchOnly);
   const unavailableReason = retailer?.unavailableReason || 'This listing is currently unavailable';
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       className={`relative bg-neutral-900/60 rounded-3xl p-6 border transition-all flex flex-col md:flex-row gap-6 items-center ${
-        isBestDeal 
-          ? 'border-emerald-500/50 hover:border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]' 
+        actualBestDeal
+          ? 'border-emerald-500/50 hover:border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.12)]'
           : 'border-neutral-800/60 hover:border-neutral-600'
       }`}
     >
-      {isBestDeal && (
+      {/* Best Deal Badge */}
+      {actualBestDeal && (
         <div className="absolute -top-3 left-6 bg-emerald-500 text-white text-[10px] font-black py-1 px-3 rounded-full flex items-center space-x-1 uppercase tracking-widest z-10">
           <Award size={12} fill="currentColor" />
           <span>Best Deal</span>
         </div>
       )}
 
-      {/* Product Image or Unavailable Logo */}
+      {/* Price Difference Tag */}
+      {!isUnavailable && priceDiff > 0 && (
+        <div className="absolute -top-3 right-6 bg-red-500/90 text-white text-[10px] font-black py-1 px-3 rounded-full uppercase tracking-widest z-10">
+          ₹{priceDiff.toLocaleString('en-IN')} more
+        </div>
+      )}
+      {actualBestDeal && !isUnavailable && (
+        <div className="absolute -top-3 right-6 bg-emerald-500/90 text-white text-[10px] font-black py-1 px-3 rounded-full uppercase tracking-widest z-10">
+          Cheapest
+        </div>
+      )}
+
+      {/* Product Image */}
       <div className={`h-24 w-24 rounded-xl overflow-hidden shrink-0 flex items-center justify-center p-2 shadow-sm ${
-        isUnavailable 
-          ? 'bg-neutral-800 border border-neutral-700' 
-          : 'bg-white'
+        isUnavailable ? 'bg-neutral-800 border border-neutral-700' : 'bg-white'
       }`}>
         {isUnavailable ? (
-          // Show store initial badge instead of product image when unavailable
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-neutral-700 to-neutral-900 rounded-lg">
             <span className="text-2xl font-black text-white/80">
               {(retailer.store || 'S')[0].toUpperCase()}
@@ -97,19 +122,60 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
           >
             {retailer.trustLabel || 'Medium'} Trust
           </span>
+
+          {/* Stock Status Badge */}
+          {!isUnavailable && (
+            <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-300 bg-neutral-800">
+              <span className={`w-1.5 h-1.5 rounded-full ${getStockColor(retailer.stockStatus)}`} />
+              {getStockText(retailer.stockStatus)}
+            </span>
+          )}
+
           {isUnavailable && (
             <span className="inline-flex items-center justify-center rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest bg-red-500/20 text-red-300">
               Unavailable
             </span>
           )}
         </div>
+
         <p className="text-neutral-400 text-sm mt-1 line-clamp-2">{retailer.name}</p>
-        
-        <div className="flex items-center justify-center md:justify-start gap-1 mt-2">
-          <Star size={14} className="text-yellow-400 fill-current" />
-          <span className="text-white text-sm font-bold">{retailer.rating || 'N/A'}</span>
-          <span className="text-neutral-500 text-xs text-nowrap">({retailer.reviews || 0} reviews)</span>
+
+        {/* Meta Row: Rating, Seller, Delivery */}
+        <div className="flex items-center justify-center md:justify-start gap-3 mt-2 flex-wrap">
+          <div className="flex items-center gap-1">
+            <Star size={14} className="text-yellow-400 fill-current" />
+            <span className="text-white text-sm font-bold">{retailer.rating || 'N/A'}</span>
+            <span className="text-neutral-500 text-xs text-nowrap">({retailer.reviews || 0} reviews)</span>
+          </div>
+
+          {retailer.sellerName && retailer.sellerName !== retailer.store && (
+            <div className="flex items-center gap-1 text-xs text-neutral-400">
+              <ShieldCheck size={12} />
+              <span>{retailer.sellerName}</span>
+            </div>
+          )}
+
+          {retailer.isOfficialStore && (
+            <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full">
+              Official Store
+            </span>
+          )}
+
+          {retailer.deliveryDate && retailer.deliveryDate !== 'Check on site' && (
+            <div className="flex items-center gap-1 text-xs text-neutral-400">
+              <Truck size={12} />
+              <span>{retailer.deliveryDate}</span>
+            </div>
+          )}
         </div>
+
+        {/* Coupon */}
+        {retailer.couponText && (
+          <div className="flex items-center gap-1 mt-2 text-xs text-orange-400">
+            <Tag size={12} />
+            <span className="font-bold">{retailer.couponText}</span>
+          </div>
+        )}
 
         <div className="mt-3 max-w-xs mx-auto md:mx-0">
           <TrustScore score={retailer.trustScore || 50} size="sm" />
@@ -119,13 +185,21 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
       {/* Price */}
       <div className="text-center md:text-right shrink-0 min-w-[150px]">
         {retailer.price && !isUnavailable ? (
-          <span className="text-3xl font-black text-white">
-            {typeof retailer.price === 'number' ? `₹${retailer.price.toLocaleString('en-IN')}` : retailer.price}
-          </span>
+          <>
+            <span className="text-3xl font-black text-white">
+              {typeof retailer.price === 'number' ? `₹${retailer.price.toLocaleString('en-IN')}` : retailer.price}
+            </span>
+            {priceDiffText && (
+              <p className="text-xs text-red-400 mt-1">{priceDiffText}</p>
+            )}
+            {actualBestDeal && (
+              <p className="text-xs text-emerald-400 font-bold mt-1">Lowest price found</p>
+            )}
+          </>
         ) : (
           <div>
-             <span className="text-neutral-300 font-bold block text-sm">Currently unavailable</span>
-             <span className="text-neutral-500 text-[10px] block mt-1 uppercase tracking-wider">{unavailableReason}</span>
+            <span className="text-neutral-300 font-bold block text-sm">Currently unavailable</span>
+            <span className="text-neutral-500 text-[10px] block mt-1 uppercase tracking-wider">{unavailableReason}</span>
           </div>
         )}
       </div>
@@ -134,16 +208,14 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
       <div className="shrink-0 w-full md:w-auto mt-2 md:mt-0">
         <a
           href={isUnavailable ? '#' : (retailer.url || '#')}
-          target={!isUnavailable && retailer.url ? "_blank" : "_self"}
+          target={!isUnavailable && retailer.url ? '_blank' : '_self'}
           rel="noopener noreferrer"
-          onClick={(e) => {
-            if (isUnavailable || !retailer.url) e.preventDefault();
-          }}
+          onClick={(e) => { if (isUnavailable || !retailer.url) e.preventDefault(); }}
           className={`w-full md:w-44 flex items-center justify-center space-x-2 py-3.5 rounded-2xl font-black shadow-lg transition-all ${
             isUnavailable
               ? 'bg-neutral-700 text-neutral-300 cursor-not-allowed'
-              : isBestDeal 
-              ? 'bg-emerald-500 text-white hover:bg-emerald-400' 
+              : actualBestDeal
+              ? 'bg-emerald-500 text-white hover:bg-emerald-400'
               : 'bg-white text-black hover:bg-neutral-200'
           }`}
         >

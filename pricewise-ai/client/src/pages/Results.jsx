@@ -1,42 +1,35 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { AlertCircle, WifiOff, Loader2, Star } from 'lucide-react';
+import { AlertCircle, WifiOff, Loader2, Bell, Clock } from 'lucide-react';
 
 import RetailerCard from '../components/features/product/RetailerCard';
-import { searchProductsLive } from '../services/api';
+import FilterSortBar from '../components/features/product/FilterSortBar';
+import PriceHistoryChart from '../components/features/product/PriceHistoryChart';
+import PriceAlertModal from '../components/features/pricing/PriceAlertModal';
+import { searchProductsLive, fetchPriceHistory } from '../services/api';
 
-const TRUSTED_STORE_KEYWORDS = [
-  'amazon',
-  'flipkart',
-  'croma',
-  'reliance',
-  'jiomart',
-  'vijay',
-  'tata',
-  'apple',
-  'samsung',
-  'oneplus',
-  'bigbasket',
-  'myntra',
-  'nykaa',
-  'poorvika',
-  'sangeetha',
-  'bajaj',
-  'invent',
-  'imagine',
-];
+// Skeleton loader for cards
+const SkeletonCard = () => (
+  <div className="bg-neutral-900/60 rounded-3xl p-6 border border-neutral-800/60 animate-pulse flex flex-col md:flex-row gap-6 items-center">
+    <div className="h-24 w-24 rounded-xl bg-neutral-800 shrink-0" />
+    <div className="flex-1 space-y-3 w-full">
+      <div className="h-6 bg-neutral-800 rounded-lg w-32" />
+      <div className="h-4 bg-neutral-800 rounded-lg w-64" />
+      <div className="h-3 bg-neutral-800 rounded-lg w-40" />
+    </div>
+    <div className="h-8 bg-neutral-800 rounded-lg w-28 shrink-0" />
+    <div className="h-12 bg-neutral-800 rounded-2xl w-36 shrink-0" />
+  </div>
+);
 
-function isLikelyUnavailableRetailer(retailer) {
-  const store = String(retailer?.store || '').toLowerCase();
-  const url = String(retailer?.url || '').toLowerCase();
-  const hasLivePrice = typeof retailer?.price === 'number' && retailer.price > 0;
-  const explicitUnavailable = Boolean(retailer?.searchOnly || retailer?.unavailableReason);
-  const hasTrustedStoreKeyword = TRUSTED_STORE_KEYWORDS.some((keyword) => store.includes(keyword));
-  const suspiciousStore = !hasTrustedStoreKeyword || store.includes('unknown') || store.includes('sponsored');
-  const missingUrl = !retailer?.url;
-  const weakTrust = Number(retailer?.trustScore || 0) < 70;
-  const unsafeTarget = url.includes('eknumber.') || url.includes('404') || url.includes('/bestsellers-');
-  return explicitUnavailable || !hasLivePrice || missingUrl || suspiciousStore || weakTrust || unsafeTarget;
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ago`;
 }
 
 const Results = () => {
@@ -47,25 +40,15 @@ const Results = () => {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(false);
   const [data, setData] = useState(null);
-  const [retryingStore, setRetryingStore] = useState('');
-  const [filterStore, setFilterStore] = useState('all');
-  const [showAllReviews, setShowAllReviews] = useState(false);
+  const [priceHistory, setPriceHistory] = useState([]);
 
-  const handleRetryOfficialStore = async (storeName) => {
-    if (!query || retryingStore) return;
-    setRetryingStore(storeName);
-    setApiError(false);
+  // Filter/Sort state
+  const [sortBy, setSortBy] = useState('price-asc');
+  const [inStockOnly, setInStockOnly] = useState(false);
+  const [minRating, setMinRating] = useState(0);
 
-    try {
-      const resData = await searchProductsLive(query);
-      setData(resData);
-    } catch (e) {
-      console.error(e);
-      setApiError(true);
-    } finally {
-      setRetryingStore('');
-    }
-  };
+  // Price Alert modal
+  const [alertModalOpen, setAlertModalOpen] = useState(false);
 
   useEffect(() => {
     if (!query) { setLoading(false); return; }
@@ -73,29 +56,35 @@ const Results = () => {
     setLoading(true);
     setApiError(false);
     setData(null);
+    setPriceHistory([]);
 
     searchProductsLive(query)
-      .then(resData => {
-        if (!cancelled) {
-          setData(resData);
-        }
-      })
-      .catch((e) => { 
-        console.error(e);
-        if (!cancelled) setApiError(true); 
-      })
-      .finally(() => { 
-        if (!cancelled) setLoading(false); 
-      });
+      .then(resData => { if (!cancelled) setData(resData); })
+      .catch(() => { if (!cancelled) setApiError(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    // Fetch price history in parallel (non-blocking)
+    fetchPriceHistory(query)
+      .then(h => { if (!cancelled) setPriceHistory(h); })
+      .catch(() => {});
 
     return () => { cancelled = true; };
   }, [query]);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center space-y-4">
-        <Loader2 size={40} className="text-neutral-500 animate-spin" />
-        <h2 className="text-xl font-bold text-white">Fetching real-time prices...</h2>
+      <div className="min-h-screen pb-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 space-y-6 mt-8">
+          <div className="flex items-baseline gap-4 border-b border-neutral-800 pb-8">
+            <div>
+              <div className="h-8 bg-neutral-800 rounded-lg w-48 animate-pulse" />
+              <div className="h-4 bg-neutral-800 rounded-lg w-32 mt-3 animate-pulse" />
+            </div>
+          </div>
+          <div className="space-y-4">
+            {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
+          </div>
+        </div>
       </div>
     );
   }
@@ -108,21 +97,18 @@ const Results = () => {
             <WifiOff size={40} />
           </div>
           <h2 className="text-2xl font-black text-white">Search Failed</h2>
-          <p className="text-neutral-500 text-sm">
-            {data?.error || "Couldn't reach the search server. Check if SERPAPI_API_KEY is configured."}
-          </p>
-          <button onClick={() => navigate('/')} className="px-8 py-3 bg-white text-black rounded-2xl font-bold">
-            Search Again
-          </button>
+          <p className="text-neutral-500 text-sm">{data?.error || "Couldn't reach the search server."}</p>
+          <button onClick={() => navigate('/')} className="px-8 py-3 bg-white text-black rounded-2xl font-bold">Search Again</button>
         </div>
       </div>
     );
   }
 
   const retailers = data?.retailers || [];
-  const reviews = data?.reviews || [];
   const unavailableOfficialRetailers = data?.unavailableOfficialRetailers || [];
   const resultWarning = data?.warning || '';
+  const cachedAt = data?.cachedAt || '';
+  const bestDealPrice = data?.bestDealPrice;
 
   if (retailers.length === 0) {
     return (
@@ -133,47 +119,69 @@ const Results = () => {
           </div>
           <h2 className="text-2xl font-black text-white">No results for "{query}"</h2>
           <p className="text-neutral-500">We couldn't find this product. Try a shorter or more generic keyword.</p>
-          <button onClick={() => navigate('/')} className="px-8 py-3 bg-white text-black rounded-2xl font-bold">
-            Search Again
-          </button>
+          <button onClick={() => navigate('/')} className="px-8 py-3 bg-white text-black rounded-2xl font-bold">Search Again</button>
         </div>
       </div>
     );
   }
 
-  const normalizedRetailers = retailers.map((retailer) => ({
-    ...retailer,
-    isUnavailable: isLikelyUnavailableRetailer(retailer),
-  }));
+  // Apply filters
+  let filteredRetailers = [...retailers];
 
-  // Sort retailers by price: lowest first, unavailable cards go to the end.
-  const sortedRetailers = [...normalizedRetailers].sort((a, b) => {
-    if (a.isUnavailable !== b.isUnavailable) return a.isUnavailable ? 1 : -1;
-    const priceA = (typeof a.price === 'number' && a.price > 0) ? a.price : Infinity;
-    const priceB = (typeof b.price === 'number' && b.price > 0) ? b.price : Infinity;
-    return priceA - priceB;
+  if (inStockOnly) {
+    filteredRetailers = filteredRetailers.filter(r => {
+      const s = (r.stockStatus || '').toLowerCase();
+      return s.includes('in stock') || s === 'check site' || s === '';
+    });
+  }
+
+  if (minRating > 0) {
+    filteredRetailers = filteredRetailers.filter(r => (r.rating || 0) >= minRating || r.rating === 0);
+  }
+
+  // Apply sort
+  filteredRetailers.sort((a, b) => {
+    const aUnavailable = Boolean(a.searchOnly || !a.price);
+    const bUnavailable = Boolean(b.searchOnly || !b.price);
+    if (aUnavailable !== bUnavailable) return aUnavailable ? 1 : -1;
+
+    switch (sortBy) {
+      case 'trust-desc':
+        return (b.trustScore || 0) - (a.trustScore || 0);
+      case 'delivery':
+        return 0; // preserve order for now
+      case 'price-asc':
+      default:
+        return (a.price || Infinity) - (b.price || Infinity);
+    }
   });
 
-  // Find the lowest price from available listings only to highlight the Best Deal
-  const validPrices = sortedRetailers
-    .filter(r => !r.isUnavailable && r.price && typeof r.price === 'number' && r.price > 0)
-    .map(r => r.price);
-  const lowestPrice = validPrices.length > 0 ? Math.min(...validPrices) : null;
-  const sharedProductImage = sortedRetailers.find((r) => Boolean(r.image))?.image || '';
-
-  // Calculate overall rating context
-  const validRatings = retailers.filter(r => r.rating > 0).map(r => r.rating);
-  const avgRating = validRatings.length > 0 ? (validRatings.reduce((a, b) => a + b) / validRatings.length).toFixed(1) : 0;
-  const totalReviews = retailers.reduce((sum, r) => sum + (r.reviews || 0), 0);
+  const lowestPrice = bestDealPrice || null;
 
   return (
     <div className="min-h-screen pb-20">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 space-y-16 mt-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 space-y-8 mt-8">
+        {/* Header */}
         <div className="flex flex-col md:flex-row items-baseline justify-between gap-4 border-b border-neutral-800 pb-8">
           <div>
             <h1 className="text-3xl font-black text-white capitalize">{query}</h1>
-            <p className="text-neutral-400 text-sm mt-2">Comparing {sortedRetailers.length} top retailers</p>
+            <p className="text-neutral-400 text-sm mt-2">
+              Comparing {retailers.length} retailers
+              {cachedAt && (
+                <span className="inline-flex items-center gap-1 ml-3 text-neutral-500">
+                  <Clock size={12} />
+                  Updated {timeAgo(cachedAt)}
+                </span>
+              )}
+            </p>
           </div>
+          <button
+            onClick={() => setAlertModalOpen(true)}
+            className="flex items-center gap-2 px-5 py-2.5 bg-neutral-900 border border-neutral-700 rounded-xl text-sm font-bold text-white hover:bg-neutral-800 transition-all"
+          >
+            <Bell size={16} />
+            Set Price Alert
+          </button>
         </div>
 
         {resultWarning && (
@@ -182,7 +190,17 @@ const Results = () => {
           </div>
         )}
 
-        {/* ── Retailer Cards ─────────────────────────────────────── */}
+        {/* Filter/Sort Bar */}
+        <FilterSortBar
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          inStockOnly={inStockOnly}
+          setInStockOnly={setInStockOnly}
+          minRating={minRating}
+          setMinRating={setMinRating}
+        />
+
+        {/* Retailer Cards */}
         <section>
           <h2 className="text-2xl font-black text-white tracking-tight mb-6">Price Comparison</h2>
 
@@ -190,140 +208,55 @@ const Results = () => {
             <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
               <p className="text-amber-300 font-bold text-sm">Official Store Check</p>
               <p className="text-amber-100/90 text-xs mt-1">
-                We checked these genuine stores, but live price was unavailable at this moment:
+                These stores were checked but no live price was found:
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {unavailableOfficialRetailers.map((item, idx) => (
-                  <div
+                  <span
                     key={`${item.store}-${idx}`}
-                    className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-bold text-amber-200"
+                    className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-bold text-amber-200"
                   >
-                    <span>{item.store}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRetryOfficialStore(item.store)}
-                      disabled={Boolean(retryingStore)}
-                      className="inline-flex items-center gap-1 rounded-full bg-amber-300/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-100 transition hover:bg-amber-300/30 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {retryingStore === item.store ? (
-                        <>
-                          <Loader2 size={10} className="animate-spin" />
-                          Retrying
-                        </>
-                      ) : (
-                        'Retry now'
-                      )}
-                    </button>
-                  </div>
+                    {item.store}
+                  </span>
                 ))}
               </div>
             </div>
           )}
 
           <div className="space-y-4">
-            {sortedRetailers.map((retailer, i) => (
+            {filteredRetailers.map((retailer, i) => (
               <RetailerCard
                 key={`${retailer.store}-${i}`}
                 retailer={{
                   ...retailer,
-                  imageFallbacks: [sharedProductImage].filter(Boolean),
+                  isUnavailable: Boolean(retailer.searchOnly || !retailer.price),
                 }}
-                isBestDeal={retailer.price === lowestPrice && lowestPrice !== null}
+                isBestDeal={retailer.isBestDeal}
               />
             ))}
           </div>
-        </section>
 
-        {/* ── Customer Reviews ───────────────────────────────────────── */}
-        <section className="border-t border-neutral-800 pt-16">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-            <div>
-              <h2 className="text-2xl font-black text-white tracking-tight mb-2">Customer Reviews</h2>
-              <p className="text-neutral-500 max-w-xl">
-                 Overall consensus across retailers is {avgRating > 0 ? `${avgRating}/5 stars from ${totalReviews} ratings.` : 'currently unavailable.'} Read sample reviews below.
-              </p>
-            </div>
-
-            {/* Retailer Filter Radio Buttons */}
-            {reviews.length > 0 && (
-              <div className="flex flex-wrap gap-2 bg-neutral-900/50 p-2 rounded-2xl border border-neutral-800">
-                <button
-                  onClick={() => setFilterStore('all')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    filterStore === 'all' 
-                      ? 'bg-white text-black' 
-                      : 'text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  All Reviews
-                </button>
-                {[...new Set(reviews.map(r => r.store))].map(store => (
-                  <button
-                    key={store}
-                    onClick={() => setFilterStore(store)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                      filterStore === store 
-                        ? 'bg-white text-black' 
-                        : 'text-neutral-400 hover:text-white'
-                    }`}
-                  >
-                    {store}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {reviews
-              .filter(r => filterStore === 'all' || r.store === filterStore)
-              .slice(0, showAllReviews ? undefined : 4)
-              .map((review, idx) => (
-                <div key={idx} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 flex flex-col gap-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded bg-neutral-800 flex items-center justify-center text-white font-black text-sm">
-                        {review.store ? review.store.charAt(0).toUpperCase() : 'S'}
-                      </div>
-                      <div>
-                        <span className="text-sm font-bold text-white block">{review.store || 'Verified Store'}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 text-yellow-500">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <Star key={i} size={14} fill={i < Math.floor(review.rating) ? 'currentColor' : 'none'} />
-                      ))}
-                      <span className="text-xs font-bold ml-1 text-white">{review.rating}</span>
-                    </div>
-                  </div>
-                  
-                  <p className="text-neutral-300 text-sm leading-relaxed flex-1 pt-1">"{review.text}"</p>
-                  
-                  <div className="pt-3 border-t border-neutral-800 flex flex-wrap items-center gap-2 text-xs text-neutral-400 font-medium">
-                    <span>— {review.reviewer}</span>
-                    <span className="text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                      <span className="block w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      Verified Buyer
-                    </span>
-                  </div>
-                </div>
-              ))}
-          </div>
-
-          {/* View More Button */}
-          {reviews.filter(r => filterStore === 'all' || r.store === filterStore).length > 4 && (
-            <div className="mt-8 flex justify-center">
-              <button
-                onClick={() => setShowAllReviews(!showAllReviews)}
-                className="px-10 py-4 bg-neutral-900 border border-neutral-800 rounded-2xl text-white font-bold hover:bg-neutral-800 transition-all flex items-center gap-2"
-              >
-                {showAllReviews ? 'View Less Reviews' : 'View More Reviews'}
-              </button>
+          {filteredRetailers.length === 0 && (
+            <div className="text-center py-12 text-neutral-500">
+              No retailers match your filters. Try adjusting them.
             </div>
           )}
         </section>
 
+        {/* Price History Chart */}
+        <section className="border-t border-neutral-800 pt-12">
+          <PriceHistoryChart history={priceHistory} />
+        </section>
       </div>
+
+      {/* Price Alert Modal */}
+      <PriceAlertModal
+        isOpen={alertModalOpen}
+        onClose={() => setAlertModalOpen(false)}
+        currentPrice={lowestPrice}
+        productName={query}
+        productQuery={query}
+      />
     </div>
   );
 };

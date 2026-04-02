@@ -1061,49 +1061,56 @@ app.get('/api/search', async (req, res) => {
       return res.json({ retailers: [], reviews: [], unavailableOfficialRetailers });
     }
 
-    const uniqueStores = [...new Set(curatedRetailers.map(r => r.store).filter(s => s && s !== 'Unknown Retailer'))];
-    const defaultStores = ['Amazon', 'Flipkart', 'Croma', 'Reliance Digital', 'Vijay Sales', 'JioMart'];
-    
-    const getStore = (index) => uniqueStores[index % uniqueStores.length] || defaultStores[index % defaultStores.length];
+    // ── Best Deal: exactly ONE winner (lowest price, tiebreak by trust) ──
+    let bestDealIdx = -1;
+    let bestPrice = Infinity;
+    let bestTrust = -1;
+    curatedRetailers.forEach((r, i) => {
+      if (r.searchOnly || typeof r.price !== 'number' || r.price <= 0) return;
+      if (r.price < bestPrice || (r.price === bestPrice && (r.trustScore || 0) > bestTrust)) {
+        bestPrice = r.price;
+        bestTrust = r.trustScore || 0;
+        bestDealIdx = i;
+      }
+    });
 
-    // Generate mock customer review snippets to satisfy the 'Customer Reviews section' requirement
-    const mockReviews = [
-      { text: `Great product, completely satisfied with the purchase! It functions smoothly as expected.`, reviewer: 'Alice M.', rating: 5, store: getStore(0) },
-      { text: `Good value overall. The delivery took longer than I'd like, but the product is fine.`, reviewer: 'David L.', rating: 4, store: getStore(1) },
-      { text: `Decent buy. Pricing was good compared to other sites and it arrived in perfect condition.`, reviewer: 'Sam K.', rating: 4, store: getStore(2) },
-      { text: `Exceeded my expectations, the quality is very premium. Highly recommend!`, reviewer: 'Neha R.', rating: 5, store: getStore(3) },
-      { text: `Nice experience. I got it at the lowest price during the sale, works flawlessly so far.`, reviewer: 'Karan T.', rating: 4.5, store: getStore(4) },
-      { text: `Awesome deal! The packaging was secure and everything feels top notch.`, reviewer: 'Priya S.', rating: 5, store: getStore(5) },
-      { text: `Standard performance. Nothing too fancy but does the job well.`, reviewer: 'Rahul V.', rating: 3.5, store: getStore(0) },
-      { text: `Very impressed with the battery life and build quality. Worth every penny.`, reviewer: 'Sneha P.', rating: 5, store: getStore(1) },
-      { text: `The display is stunning! Best upgrade I've made this year.`, reviewer: 'Amit J.', rating: 4.5, store: getStore(2) },
-      { text: `Could be better for the price, but still a solid choice in this segment.`, reviewer: 'Vikram B.', rating: 4, store: getStore(3) }
-    ];
+    const finalRetailers = curatedRetailers.map((r, i) => {
+      const priceDiff = (typeof r.price === 'number' && r.price > 0 && bestPrice < Infinity) ? r.price - bestPrice : null;
+      return {
+        ...r,
+        isBestDeal: i === bestDealIdx,
+        priceDifference: priceDiff,
+        priceDifferenceText: priceDiff > 0 ? `₹${priceDiff.toLocaleString('en-IN')} more than best deal` : null,
+        savingsText: i === bestDealIdx && bestPrice < Infinity ? `Cheapest option` : null,
+      };
+    });
 
     const responsePayload = {
-      retailers: curatedRetailers,
-      reviews: mockReviews,
+      retailers: finalRetailers,
       unavailableOfficialRetailers,
       query,
-      name: query, 
+      name: query,
+      bestDealPrice: bestPrice < Infinity ? bestPrice : null,
+      cachedAt: new Date().toISOString(),
     };
 
-    setCachedQueryResult(query, responsePayload);
+    // Save to Supabase (fire-and-forget)
+    setCachedResult(query, responsePayload).catch(() => {});
+    savePriceSnapshots(query, finalRetailers).catch(() => {});
+
     res.json(responsePayload);
   } catch (err) {
     console.error(`[search error]`, err.message);
-    const stalePayload = getCachedQueryResult(query);
+    const stalePayload = await getCachedResult(query);
     if (stalePayload) {
       return res.json({
         ...stalePayload,
-        cached: true,
         warning: 'Showing cached results because live search is temporarily unavailable.',
       });
     }
 
     return res.json({
       retailers: [],
-      reviews: [],
       unavailableOfficialRetailers: [],
       query,
       name: query,
@@ -1128,6 +1135,37 @@ app.get('/api/redirect/:id', async (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+// ── Price History ──
+app.get('/api/price-history', async (req, res) => {
+  const query = (req.query.q || '').trim();
+  const days = parseInt(req.query.days) || 30;
+  if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
+  const history = await getPriceHistory(query, days);
+  res.json({ history, query });
+});
+
+// ── Price Alerts CRUD ──
+app.post('/api/price-alerts', async (req, res) => {
+  const { email, productQuery, productName, targetPrice, currentPrice } = req.body;
+  if (!email || !productQuery || !targetPrice) {
+    return res.status(400).json({ error: 'email, productQuery, and targetPrice are required' });
+  }
+  const result = await createAlert({ email, productQuery, productName, targetPrice, currentPrice });
+  if (result.error) return res.status(500).json({ error: result.error });
+  res.json(result);
+});
+
+app.get('/api/price-alerts', async (req, res) => {
+  const alerts = await getAlerts(req.query.email || '');
+  res.json({ alerts });
+});
+
+app.delete('/api/price-alerts/:id', async (req, res) => {
+  const result = await deleteAlert(req.params.id);
+  if (result.error) return res.status(500).json({ error: result.error });
+  res.json(result);
+});
 
 app.listen(PORT, () => {
   console.log(`\n🚀 PriceWise API running → http://localhost:${PORT}`);

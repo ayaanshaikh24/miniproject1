@@ -16,11 +16,9 @@ const ProductCard = ({ product, isWishlisted = false, onToggleWishlist }) => {
 
   const imageSources = useMemo(() => {
     const label = product.name || 'Product';
-    const namedFallback = `https://picsum.photos/seed/${encodeURIComponent(label)}/320/320`;
     return [
       product.image,
       ...(Array.isArray(product.imageFallbacks) ? product.imageFallbacks : []),
-      namedFallback,
       PRODUCT_FALLBACK_IMAGE,
       buildInlineImageFallback(label),
     ].filter(Boolean);

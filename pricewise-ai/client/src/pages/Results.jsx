@@ -5,6 +5,7 @@ import { AlertCircle, WifiOff, Loader2, Bell, Clock } from 'lucide-react';
 import RetailerCard from '../components/features/product/RetailerCard';
 import FilterSortBar from '../components/features/product/FilterSortBar';
 import PriceHistoryChart from '../components/features/product/PriceHistoryChart';
+import ProductReviews from '../components/features/product/ProductReviews';
 import PriceAlertModal from '../components/features/pricing/PriceAlertModal';
 import { searchProductsLive, fetchPriceHistory } from '../services/api';
 
@@ -247,6 +248,9 @@ const Results = () => {
         <section className="border-t border-neutral-800 pt-12">
           <PriceHistoryChart history={priceHistory} />
         </section>
+
+        {/* Customer Reviews */}
+        <ProductReviews query={query} />
       </div>
 
       {/* Price Alert Modal */}

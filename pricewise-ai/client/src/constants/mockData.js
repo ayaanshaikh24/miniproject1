@@ -487,11 +487,11 @@ export const reviews = product.reviews;
 export const alternatives = product.alternatives;
 
 export const wishlist = [
-  { id: "s-s24", name: "Samsung Galaxy S24", price: 62999, old_price: 64999, dropped: true, image: "https://m.media-amazon.com/images/I/71ScpYvIDHL._SL1500_.jpg" },
-  { id: "w-earbuds", name: "Sony WF-1000XM5", price: 21999, dropped: false, image: "https://m.media-amazon.com/images/I/61oCISLE+PL._SL1500_.jpg" },
-  { id: "l-macbook", name: "MacBook Air M3", price: 104990, dropped: false, image: "https://m.media-amazon.com/images/I/71f5Eu5lJSL._SL1500_.jpg" },
-  { id: "v-ipad", name: "iPad Pro 11", price: 79900, old_price: 81900, dropped: true, image: "https://m.media-amazon.com/images/I/81d74M0QveL._SL1500_.jpg" },
-  { id: "k-kindle", name: "Kindle Paperwhite", price: 13999, dropped: false, image: "https://m.media-amazon.com/images/I/61D4Z3yKPAL._SL1000_.jpg" },
+  { id: "s-s24", name: "Samsung Galaxy S24", price: 62999, old_price: 64999, dropped: true, image: "https://fdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s24.jpg", imageFallbacks: ["https://images.samsung.com/is/image/samsung/p6pim/in/2401/gallery/in-galaxy-s24-sm-s921blbgins-thumb-539573041"] },
+  { id: "w-earbuds", name: "Sony WF-1000XM5", price: 21999, dropped: false, image: "https://fdn2.gsmarena.com/vv/bigpic/sony-wf-1000xm5.jpg", imageFallbacks: ["https://www.sony.co.in/image/5d02da5df552836db894cead8a68f5f3?fmt=pjpeg&bgcolor=FFFFFF&bgc=FFFFFF&wid=515&hei=515"] },
+  { id: "l-macbook", name: "MacBook Air M3", price: 104990, dropped: false, image: "https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/mba13-midnight-select-202402?wid=400&hei=400&fmt=jpeg&qlt=90", imageFallbacks: ["https://fdn2.gsmarena.com/vv/bigpic/apple-macbook-air-m3-15-inch.jpg"] },
+  { id: "v-ipad", name: "iPad Pro 11", price: 79900, old_price: 81900, dropped: true, image: "https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/ipad-pro-13-select-wifi-spacegray-202210?wid=400&hei=400&fmt=jpeg&qlt=90", imageFallbacks: ["https://fdn2.gsmarena.com/vv/bigpic/apple-ipad-pro-11-2024.jpg"] },
+  { id: "k-kindle", name: "Kindle Paperwhite", price: 13999, dropped: false, image: "https://m.media-amazon.com/images/I/61D4Z3yKPAL._SL1000_.jpg", imageFallbacks: ["https://m.media-amazon.com/images/I/71SrFysBpuL._AC_SX679_.jpg"] },
 ];
 
 export const alerts = [

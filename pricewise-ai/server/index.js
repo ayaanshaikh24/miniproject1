@@ -15,6 +15,7 @@ import { withRetailerPage } from './services/scrapers/browser.js';
 import { getCachedResult, setCachedResult } from './services/cache.js';
 import { savePriceSnapshots, getPriceHistory } from './services/priceHistory.js';
 import { createAlert, getAlerts, deleteAlert } from './services/priceAlerts.js';
+import { fetchProductReviews } from './services/reviews.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -1143,6 +1144,25 @@ app.get('/api/price-history', async (req, res) => {
   if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
   const history = await getPriceHistory(query, days);
   res.json({ history, query });
+});
+
+// ── Product Reviews (real-time) ──
+app.get('/api/reviews', async (req, res) => {
+  const query = (req.query.q || '').trim();
+  if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
+
+  const API_KEY = process.env.SERPAPI_API_KEY;
+  if (!API_KEY) {
+    return res.status(500).json({ error: 'SERPAPI_API_KEY is missing' });
+  }
+
+  try {
+    const result = await fetchProductReviews(query, API_KEY);
+    res.json(result);
+  } catch (err) {
+    console.error('[reviews] endpoint error:', err.message);
+    res.json({ reviews: [], stats: null, error: err.message });
+  }
 });
 
 // ── Price Alerts CRUD ──

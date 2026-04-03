@@ -53,6 +53,19 @@ export async function fetchPriceHistory(query, days = 30) {
 }
 
 /**
+ * Fetch real-time product reviews from multiple retailers.
+ */
+export async function fetchProductReviews(query) {
+  try {
+    const res = await fetch(`${API_BASE}/reviews?q=${encodeURIComponent(query)}`);
+    if (!res.ok) return { reviews: [], stats: null };
+    return await res.json();
+  } catch {
+    return { reviews: [], stats: null };
+  }
+}
+
+/**
  * Create a price alert (stored in Supabase via backend).
  */
 export async function createPriceAlertAPI({ email, productQuery, productName, targetPrice, currentPrice }) {

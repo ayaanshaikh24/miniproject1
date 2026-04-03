@@ -78,6 +78,13 @@ function isUsableProductUrl(value, site) {
     'www.tatacliq.com': ['/p-'],
     'www.vijaysales.com': ['/p/', '/product/'],
     'www.jiomart.com': ['/p/'],
+    'www.snapdeal.com': ['/product/'],
+    'www.meesho.com': ['/p/'],
+    'www.nykaa.com': ['/p/'],
+    'www.myntra.com': ['/buy/'],
+    'www.tataneu.com': ['/p/'],
+    'www.bajajfinservmarkets.in': ['/product/'],
+    'www.shopclues.com': ['/product/'],
   };
 
   const deniedFragments = ['/search', 'search?', '/s?', '/all-categories', '/offers', '/collections'];

@@ -22,7 +22,7 @@ const Footer = () => {
           <div>
             <h4 className="text-xs font-black text-neutral-400 uppercase tracking-[0.2em] mb-6">Navigation</h4>
             <ul className="space-y-3">
-              {[{name: 'Home', path: '/'}, {name: 'Compare Products', path: '/results'}, {name: 'Dashboard', path: '/dashboard'}].map(link => (
+              {[{name: 'Home', path: '/'}, {name: 'Compare Products', path: '/'}, {name: 'Dashboard', path: '/dashboard'}].map(link => (
                 <li key={link.name}>
                   <Link to={link.path} className="text-sm text-neutral-500 hover:text-white transition-colors">{link.name}</Link>
                 </li>
@@ -30,15 +30,21 @@ const Footer = () => {
             </ul>
           </div>
 
-          {/* Resources */}
           <div>
             <h4 className="text-xs font-black text-neutral-400 uppercase tracking-[0.2em] mb-6">Resources</h4>
             <ul className="space-y-3">
-              {['API Documentation', 'Chrome Extension', 'How it Works', 'Privacy Policy'].map(link => (
-                <li key={link}>
-                  <a href="#" className="text-sm text-neutral-500 hover:text-white transition-colors">{link}</a>
-                </li>
-              ))}
+              <li>
+                <Link to="/" className="text-sm text-neutral-500 hover:text-white transition-colors">How it Works</Link>
+              </li>
+              <li>
+                <Link to="/dashboard" className="text-sm text-neutral-500 hover:text-white transition-colors">My Dashboard</Link>
+              </li>
+              <li>
+                <Link to="/login" className="text-sm text-neutral-500 hover:text-white transition-colors">Sign In / Register</Link>
+              </li>
+              <li>
+                <a href="https://serpapi.com" target="_blank" rel="noopener noreferrer" className="text-sm text-neutral-500 hover:text-white transition-colors">Powered by SerpAPI</a>
+              </li>
             </ul>
           </div>
 

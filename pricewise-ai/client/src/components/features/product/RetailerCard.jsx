@@ -207,19 +207,19 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
       {/* Actions */}
       <div className="shrink-0 w-full md:w-auto mt-2 md:mt-0">
         <a
-          href={isUnavailable ? '#' : (retailer.url || '#')}
-          target={!isUnavailable && retailer.url ? '_blank' : '_self'}
+          href={retailer.url || '#'}
+          target="_blank"
           rel="noopener noreferrer"
-          onClick={(e) => { if (isUnavailable || !retailer.url) e.preventDefault(); }}
+          onClick={(e) => { if (!retailer.url || retailer.url === '#') e.preventDefault(); }}
           className={`w-full md:w-44 flex items-center justify-center space-x-2 py-3.5 rounded-2xl font-black shadow-lg transition-all ${
             isUnavailable
-              ? 'bg-neutral-700 text-neutral-300 cursor-not-allowed'
+              ? 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600 cursor-pointer'
               : actualBestDeal
               ? 'bg-emerald-500 text-white hover:bg-emerald-400'
               : 'bg-white text-black hover:bg-neutral-200'
           }`}
         >
-          <span>{isUnavailable ? 'Unavailable' : 'Buy Now'}</span>
+          <span>{isUnavailable ? 'Check Site' : 'Buy Now'}</span>
           <ExternalLink size={16} />
         </a>
       </div>

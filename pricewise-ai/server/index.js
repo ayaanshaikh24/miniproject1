@@ -974,36 +974,43 @@ app.get('/api/search', async (req, res) => {
       ...(data.inline_shopping_results || []),
     ];
 
-    // Ensure ALL 7 core retailers are in the final list (with prices or search URLs)
+    // Match core retailers from shopping results by their actual source name
     for (const targetRetailer of CORE_RETAILER_TARGETS) {
-      // Check if this retailer already has a result with a price
-      const exists = retailers.some(r => 
-        r.store?.toLowerCase() === targetRetailer.retailer.toLowerCase() && r.price
+      const exists = retailers.some(r =>
+        normalizeStoreName(r.store) === normalizeStoreName(targetRetailer.retailer) && r.price
       );
-      
+
       if (!exists && shoppingResults.length > 0) {
-        // Try to add from shopping results
-        const fallbackResult = shoppingResults[0];
-        const price = fallbackResult.extracted_price || fallbackResult.price;
-        
-        if (price) {
-          try {
-            const priceNum = parseInt(String(price).replace(/[^0-9]/g, ''), 10);
-            if (priceNum >= 500) {
-              retailers.push(createRetailerEntry({
-                name: (fallbackResult.title || query).substring(0, 80),
-                price: priceNum,
-                store: targetRetailer.retailer,
-                rating: fallbackResult.rating || 0,
-                reviews: fallbackResult.reviews || 0,
-                url: fallbackResult.link || targetRetailer.searchUrl.replace('{query}', encodeURIComponent(query)),
-                image: fallbackResult.thumbnail || '',
-                source: 'fallback-shopping',
-              }));
-              console.log(`[fallback-shopping] ${targetRetailer.retailer} ✓ ₹${priceNum}`);
-            }
-          } catch (e) {
-            // Fall through
+        // Only pick a shopping result that actually belongs to this retailer
+        const matchingResult = shoppingResults.find(item => {
+          const src = normalizeStoreName(item.source || '');
+          const target = normalizeStoreName(targetRetailer.retailer);
+          return src === target || src.includes(target) || target.includes(src);
+        });
+
+        if (matchingResult) {
+          const price = matchingResult.extracted_price || parseFloat(String(matchingResult.price || '').replace(/[^0-9.]/g, ''));
+          if (price && price >= 500) {
+            const redirectUrl = rememberRedirectTarget({
+              store: matchingResult.source || targetRetailer.retailer,
+              name: matchingResult.title || query,
+              query,
+              price,
+              directUrl: matchingResult.link || matchingResult.product_link || '',
+              immersiveApiUrl: matchingResult.serpapi_immersive_product_api || '',
+            });
+
+            retailers.push(createRetailerEntry({
+              name: (matchingResult.title || query).substring(0, 80),
+              price,
+              store: targetRetailer.retailer,
+              rating: matchingResult.rating || 0,
+              reviews: matchingResult.reviews || 0,
+              url: redirectUrl,
+              image: matchingResult.thumbnail || '',
+              source: 'serpapi-matched',
+            }));
+            console.log(`[serpapi-matched] ${targetRetailer.retailer} ✓ ₹${price}`);
           }
         }
       }

@@ -40,7 +40,7 @@ const Navbar = ({ darkMode, setDarkMode }) => {
 
   const navLinks = [
     { name: 'Home', path: '/' },
-    { name: 'Products', path: '/results' },
+    { name: 'Compare', path: '/' },
     { name: 'Dashboard', path: '/dashboard' },
   ];
 

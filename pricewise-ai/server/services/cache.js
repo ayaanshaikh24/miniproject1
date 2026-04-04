@@ -1,6 +1,6 @@
 import { supabase, isSupabaseReady } from './supabase.js';
 
-const CACHE_TTL_HOURS = 3;
+const CACHE_TTL_HOURS = 1;
 
 export async function getCachedResult(query) {
   if (!isSupabaseReady()) return null;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { AlertCircle, WifiOff, Loader2, Bell, Clock } from 'lucide-react';
+import { AlertCircle, WifiOff, Loader2, Bell, Clock, RefreshCw, ExternalLink } from 'lucide-react';
 
 import RetailerCard from '../components/features/product/RetailerCard';
 import FilterSortBar from '../components/features/product/FilterSortBar';
@@ -42,6 +42,7 @@ const Results = () => {
   const [apiError, setApiError] = useState(false);
   const [data, setData] = useState(null);
   const [priceHistory, setPriceHistory] = useState([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Filter/Sort state
   const [sortBy, setSortBy] = useState('price-asc');
@@ -51,26 +52,33 @@ const Results = () => {
   // Price Alert modal
   const [alertModalOpen, setAlertModalOpen] = useState(false);
 
-  useEffect(() => {
+  const doSearch = (fresh = false) => {
     if (!query) { setLoading(false); return; }
-    let cancelled = false;
     setLoading(true);
     setApiError(false);
     setData(null);
     setPriceHistory([]);
 
-    searchProductsLive(query)
-      .then(resData => { if (!cancelled) setData(resData); })
-      .catch(() => { if (!cancelled) setApiError(true); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    searchProductsLive(query, { fresh })
+      .then(resData => setData(resData))
+      .catch(() => setApiError(true))
+      .finally(() => { setLoading(false); setIsRefreshing(false); });
 
-    // Fetch price history in parallel (non-blocking)
     fetchPriceHistory(query)
-      .then(h => { if (!cancelled) setPriceHistory(h); })
+      .then(h => setPriceHistory(h))
       .catch(() => {});
+  };
 
+  useEffect(() => {
+    let cancelled = false;
+    doSearch(false);
     return () => { cancelled = true; };
   }, [query]);
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    doSearch(true);
+  };
 
   if (loading) {
     return (
@@ -105,11 +113,21 @@ const Results = () => {
     );
   }
 
-  const retailers = data?.retailers || [];
-  const unavailableOfficialRetailers = data?.unavailableOfficialRetailers || [];
+  const allRetailers = data?.retailers || [];
   const resultWarning = data?.warning || '';
   const cachedAt = data?.cachedAt || '';
   const bestDealPrice = data?.bestDealPrice;
+
+  // Split retailers into those with real prices vs unavailable/searchOnly.
+  // Unavailable entries are shown in the amber banner, not as full cards.
+  const retailers = allRetailers.filter(r => r.price && r.price > 0 && !r.searchOnly);
+  const unavailableFromCards = allRetailers
+    .filter(r => !r.price || r.price <= 0 || r.searchOnly)
+    .map(r => ({ store: r.store, reason: r.unavailableReason || 'No live price found', searchUrl: r.url || '' }));
+  const unavailableOfficialRetailers = [
+    ...(data?.unavailableOfficialRetailers || []),
+    ...unavailableFromCards,
+  ];
 
   if (retailers.length === 0) {
     return (
@@ -120,6 +138,26 @@ const Results = () => {
           </div>
           <h2 className="text-2xl font-black text-white">No results for "{query}"</h2>
           <p className="text-neutral-500">We couldn't find this product. Try a shorter or more generic keyword.</p>
+          {unavailableOfficialRetailers.length > 0 && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-left mt-4">
+              <p className="text-amber-300 font-bold text-sm">Official Store Check</p>
+              <p className="text-amber-100/90 text-xs mt-1">Click to search directly:</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {unavailableOfficialRetailers.map((item, idx) => (
+                  <a
+                    key={`${item.store}-${idx}`}
+                    href={item.searchUrl || `https://www.google.com/search?q=${encodeURIComponent(query + ' ' + item.store)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-bold text-amber-200 hover:bg-amber-400/25 transition-all"
+                  >
+                    {item.store}
+                    <ExternalLink size={10} className="ml-1.5 opacity-60" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
           <button onClick={() => navigate('/')} className="px-8 py-3 bg-white text-black rounded-2xl font-bold">Search Again</button>
         </div>
       </div>
@@ -183,6 +221,14 @@ const Results = () => {
             <Bell size={16} />
             Set Price Alert
           </button>
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-5 py-2.5 bg-neutral-900 border border-neutral-700 rounded-xl text-sm font-bold text-white hover:bg-neutral-800 transition-all disabled:opacity-50 disabled:cursor-wait"
+          >
+            <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+            {isRefreshing ? 'Refreshing…' : 'Refresh Prices'}
+          </button>
         </div>
 
         {resultWarning && (
@@ -209,16 +255,20 @@ const Results = () => {
             <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
               <p className="text-amber-300 font-bold text-sm">Official Store Check</p>
               <p className="text-amber-100/90 text-xs mt-1">
-                These stores were checked but no live price was found:
+                These stores were checked but no live price was found. Click to search directly:
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {unavailableOfficialRetailers.map((item, idx) => (
-                  <span
+                  <a
                     key={`${item.store}-${idx}`}
-                    className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-bold text-amber-200"
+                    href={item.searchUrl || `https://www.google.com/search?q=${encodeURIComponent(query + ' ' + item.store)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-bold text-amber-200 hover:bg-amber-400/25 hover:border-amber-300/60 transition-all cursor-pointer"
                   >
                     {item.store}
-                  </span>
+                    <ExternalLink size={10} className="ml-1.5 opacity-60" />
+                  </a>
                 ))}
               </div>
             </div>

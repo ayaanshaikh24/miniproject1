@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { ExternalLink, Star, Award, Package, Truck, ShieldCheck, Tag } from 'lucide-react';
 import { motion } from 'framer-motion';
 import TrustScore from '../pricing/TrustScore';
@@ -54,6 +54,36 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
 
   const isUnavailable = Boolean(retailer?.isUnavailable || retailer?.searchOnly);
   const unavailableReason = retailer?.unavailableReason || 'This listing is currently unavailable';
+  const [loadingUrl, setLoadingUrl] = useState(false);
+
+  // Resolve the redirect URL and open in a new tab
+  const handleBuyNow = useCallback(async (e) => {
+    e.preventDefault();
+    const rawUrl = retailer?.url || '';
+    if (!rawUrl || rawUrl === '#') return;
+
+    // If it's a redirect API URL, resolve it server-side first
+    if (rawUrl.startsWith('/api/redirect/')) {
+      setLoadingUrl(true);
+      try {
+        const res = await fetch(rawUrl);
+        const data = await res.json();
+        if (data?.url) {
+          window.open(data.url, '_blank', 'noopener,noreferrer');
+        }
+      } catch {
+        // fallback: search for the product on Google
+        const searchTerm = [retailer?.name || '', retailer?.store || '', 'india'].filter(Boolean).join(' ');
+        window.open(`https://www.google.com/search?q=${encodeURIComponent(searchTerm)}`, '_blank', 'noopener,noreferrer');
+      } finally {
+        setLoadingUrl(false);
+      }
+    } else {
+      // Direct URL (search fallback, known site URL, etc.) — open immediately
+      window.open(rawUrl, '_blank', 'noopener,noreferrer');
+    }
+  }, [retailer?.url, retailer?.store, retailer?.name]);
+
 
   return (
     <motion.div
@@ -206,12 +236,10 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
 
       {/* Actions */}
       <div className="shrink-0 w-full md:w-auto mt-2 md:mt-0">
-        <a
-          href={retailer.url || '#'}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => { if (!retailer.url || retailer.url === '#') e.preventDefault(); }}
-          className={`w-full md:w-44 flex items-center justify-center space-x-2 py-3.5 rounded-2xl font-black shadow-lg transition-all ${
+        <button
+          onClick={handleBuyNow}
+          disabled={loadingUrl}
+          className={`w-full md:w-44 flex items-center justify-center space-x-2 py-3.5 rounded-2xl font-black shadow-lg transition-all disabled:opacity-60 disabled:cursor-wait ${
             isUnavailable
               ? 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600 cursor-pointer'
               : actualBestDeal
@@ -219,9 +247,9 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
               : 'bg-white text-black hover:bg-neutral-200'
           }`}
         >
-          <span>{isUnavailable ? 'Check Site' : 'Buy Now'}</span>
+          <span>{loadingUrl ? 'Opening…' : isUnavailable ? 'Check Site' : 'Buy Now'}</span>
           <ExternalLink size={16} />
-        </a>
+        </button>
       </div>
     </motion.div>
   );

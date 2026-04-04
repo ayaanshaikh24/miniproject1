@@ -7,8 +7,9 @@ function delay(ms) {
 
 /**
  * Search for a product across all retailers via the backend scrapers.
+ * Pass fresh=true to bypass the server-side cache.
  */
-export async function searchProductsLive(query) {
+export async function searchProductsLive(query, { fresh = false } = {}) {
   let lastError;
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -16,7 +17,8 @@ export async function searchProductsLive(query) {
     const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
 
     try {
-      const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
+      const url = `${API_BASE}/search?q=${encodeURIComponent(query)}${fresh ? '&fresh=1' : ''}`;
+      const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timer);
       if (!res.ok) throw new Error(`API error ${res.status}`);
       const payload = await res.json();

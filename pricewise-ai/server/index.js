@@ -387,9 +387,9 @@ const CORE_RETAILER_TARGETS = [
   },
 ];
 
-const MAIN_SERPAPI_TIMEOUT_MS = 8000;
+const MAIN_SERPAPI_TIMEOUT_MS = 15000;
 const SCRAPER_TIMEOUT_MS = 12000;
-const RECOVERY_TIMEOUT_MS = 3000;
+const RECOVERY_TIMEOUT_MS = 12000;
 
 async function withTimeout(task, timeoutMs, fallbackValue = null) {
   return await Promise.race([
@@ -794,8 +794,12 @@ function rememberRedirectTarget(target) {
 }
 
 function buildRedirectFallbackUrl(target) {
-  const terms = [target?.store, target?.name, target?.query].filter(Boolean).join(' ').trim();
-  return `https://www.google.com/search?q=${encodeURIComponent(terms || 'buy online india')}`;
+  // Build a useful search query: prefer product name/query over bare store name
+  const productTerm = (target?.name || target?.query || '').trim();
+  const storeTerm = (target?.store || '').trim();
+  const terms = [productTerm, storeTerm].filter(Boolean).join(' ').trim();
+  const searchQ = terms || 'smartphone deals india';
+  return `https://www.google.com/search?q=${encodeURIComponent(searchQ)}`;
 }
 
 async function isLikelyReachableDestination(url) {
@@ -838,17 +842,23 @@ async function getImmersiveStores(immersiveApiUrl, apiKey) {
 
 async function resolveDirectMerchantUrl(target, apiKey) {
   if (!target) return '';
-  if (target.directUrl && !target.directUrl.includes('google.com/search?ibp=oshop')) {
-    const cleaned = cleanMerchantUrl(target.directUrl);
-    const trusted = isKnownTrustedRetailer(target.store, cleaned);
-    const reachable = await isLikelyReachableDestination(cleaned);
-    return trusted && reachable ? cleaned : buildRedirectFallbackUrl(target);
+
+  // Helper: if the URL belongs to a known trusted retailer, trust it directly
+  // (don't do a server-side HEAD check — Indian e-commerce sites block these).
+  function resolveWithTrust(url) {
+    const cleaned = cleanMerchantUrl(url || '');
+    if (!cleaned) return buildRedirectFallbackUrl(target);
+    if (isKnownTrustedRetailer(target.store, cleaned)) return cleaned;
+    // For unknown stores fall back to Google search
+    return buildRedirectFallbackUrl(target);
   }
+
+  if (target.directUrl && !target.directUrl.includes('google.com/search?ibp=oshop')) {
+    return resolveWithTrust(target.directUrl);
+  }
+
   if (!target.immersiveApiUrl) {
-    const cleaned = cleanMerchantUrl(target.directUrl || '');
-    const trusted = isKnownTrustedRetailer(target.store, cleaned);
-    const reachable = await isLikelyReachableDestination(cleaned);
-    return trusted && reachable ? cleaned : buildRedirectFallbackUrl(target);
+    return resolveWithTrust(target.directUrl || '');
   }
 
   try {
@@ -860,7 +870,7 @@ async function resolveDirectMerchantUrl(target, apiKey) {
     const candidates = exactStore.length > 0 ? exactStore : stores.filter((entry) => normalizeStoreName(entry.name).includes(targetStore) || targetStore.includes(normalizeStoreName(entry.name)));
 
     if (candidates.length === 0) {
-      return cleanMerchantUrl(target.directUrl || '');
+      return resolveWithTrust(target.directUrl || '');
     }
 
     const ranked = candidates.sort((a, b) => {
@@ -869,16 +879,10 @@ async function resolveDirectMerchantUrl(target, apiKey) {
       return priceDiffA - priceDiffB;
     });
 
-    const resolved = cleanMerchantUrl(ranked[0]?.link || target.directUrl || '');
-    const trusted = isKnownTrustedRetailer(target.store, resolved);
-    const reachable = await isLikelyReachableDestination(resolved);
-    return trusted && reachable ? resolved : buildRedirectFallbackUrl(target);
+    return resolveWithTrust(ranked[0]?.link || target.directUrl || '');
   } catch (error) {
     console.warn('[redirect] failed to resolve merchant URL:', error.message);
-    const cleaned = cleanMerchantUrl(target.directUrl || '');
-    const trusted = isKnownTrustedRetailer(target.store, cleaned);
-    const reachable = await isLikelyReachableDestination(cleaned);
-    return trusted && reachable ? cleaned : buildRedirectFallbackUrl(target);
+    return resolveWithTrust(target.directUrl || '');
   }
 }
 
@@ -912,17 +916,34 @@ app.get('/api/search', async (req, res) => {
   const query = (req.query.q || '').trim();
   if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
 
-  const cachedPayload = await getCachedResult(query);
+  // Allow ?fresh=1 to bypass cache
+  const bypassCache = req.query.fresh === '1';
+
+  const cachedPayload = bypassCache ? null : await getCachedResult(query);
   if (cachedPayload) {
     return res.json(cachedPayload);
   }
+
 
   const API_KEY = process.env.SERPAPI_API_KEY;
   if (!API_KEY) {
     return res.status(500).json({ error: 'System configuration error: SERPAPI_API_KEY is missing' });
   }
 
-  console.log(`[search] "${query}" — fetching official scrapers + curated SerpAPI results in parallel...`);
+  console.log(`[search] "${query}" — fetching SerpAPI + scrapers in parallel...`);
+
+  // Pre-start SerpAPI recovery for ALL official retailer targets immediately.
+  // These run in the background while scrapers also run, so if scrapers fail
+  // (due to anti-bot/CAPTCHA), SerpAPI results are already available.
+  const prestartRecoveryPromise = Promise.allSettled(
+    OFFICIAL_RECOVERY_TARGETS.map((target) =>
+      withTimeout(
+        () => fetchOfficialSerpapiFallback({ query, target, apiKey: API_KEY }),
+        RECOVERY_TIMEOUT_MS,
+        null,
+      )
+    )
+  );
 
   const scraperTasks = [
     ['Amazon', scrapeAmazon(query)],
@@ -936,7 +957,7 @@ app.get('/api/search', async (req, res) => {
 
   const [serpResult, ...scraperResults] = await Promise.allSettled([
     withTimeout(async () => {
-      const url = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&api_key=${API_KEY}&gl=in&hl=en&num=20`;
+      const url = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&api_key=${API_KEY}&gl=in&hl=en&num=40`;
       return await fetchJsonWithTimeout(url, MAIN_SERPAPI_TIMEOUT_MS);
     }, MAIN_SERPAPI_TIMEOUT_MS, {}),
     ...scraperTasks.map(([name, task]) => withTimeout(() => task.catch((err) => {
@@ -982,10 +1003,14 @@ app.get('/api/search', async (req, res) => {
 
       if (!exists && shoppingResults.length > 0) {
         // Only pick a shopping result that actually belongs to this retailer
+        // AND is relevant to the query (not a variant model like "Pro" or "17e")
         const matchingResult = shoppingResults.find(item => {
           const src = normalizeStoreName(item.source || '');
           const target = normalizeStoreName(targetRetailer.retailer);
-          return src === target || src.includes(target) || target.includes(src);
+          const storeMatch = src === target || src.includes(target) || target.includes(src);
+          if (!storeMatch) return false;
+          const title = item.title || '';
+          return isRelevantProduct(title, query) && !isLowQualityListing(title);
         });
 
         if (matchingResult) {
@@ -1074,108 +1099,62 @@ app.get('/api/search', async (req, res) => {
         return (a.price || Number.MAX_SAFE_INTEGER) - (b.price || Number.MAX_SAFE_INTEGER);
       });
 
-    // Recovery pass: when key official retailers are missing, do a quick site-search scrape.
+    // Recovery: use pre-started SerpAPI results that have been running in parallel
+    // with the scrapers. By now, they should be complete or nearly complete.
     const seenStores = new Set(curatedRetailers.map((r) => normalizeStoreName(r.store)));
-    const missingOfficialTargets = OFFICIAL_RECOVERY_TARGETS.filter((target) => !seenStores.has(normalizeStoreName(target.retailer)));
-
     const unavailableOfficialRetailers = [];
 
-    if (missingOfficialTargets.length > 0) {
-      const recoveredResults = await Promise.allSettled(
-        missingOfficialTargets.map(async (target) => {
-          const serpapiRecovery = await withTimeout(
-            () => fetchOfficialSerpapiFallback({ query, target, apiKey: API_KEY }),
-            RECOVERY_TIMEOUT_MS,
-            null,
-          );
-          if (serpapiRecovery) return serpapiRecovery;
+    const preRecoveryResults = await prestartRecoveryPromise;
 
-          const organicRecovery = await withTimeout(
-            () => fetchOfficialOrganicFallback({ query, target, apiKey: API_KEY }),
-            RECOVERY_TIMEOUT_MS,
-            null,
-          );
-          if (organicRecovery) return organicRecovery;
+    for (let i = 0; i < OFFICIAL_RECOVERY_TARGETS.length; i++) {
+      const target = OFFICIAL_RECOVERY_TARGETS[i];
+      const targetNorm = normalizeStoreName(target.retailer);
 
-          return await withTimeout(
-            () => scrapeOfficialSiteRecovery({
-              query,
-              retailer: target.retailer,
-              site: target.site,
-              trust: target.trust,
-            }),
-            RECOVERY_TIMEOUT_MS,
-            null,
-          );
-        }),
-      );
+      // Skip retailers already found by scrapers or main SerpAPI
+      if (seenStores.has(targetNorm)) continue;
 
-      for (let index = 0; index < recoveredResults.length; index += 1) {
-        const result = recoveredResults[index];
-        const target = missingOfficialTargets[index];
-        let added = false;
+      const result = preRecoveryResults[i];
+      let added = false;
 
-        if (result.status === 'fulfilled' && result.value) {
-          const recovered = result.value;
-          if (recovered.source === 'serpapi') {
-            if (!isBlockedRetailer(recovered.store) && !isLowQualityListing(recovered.name) && isRelevantProduct(recovered.name, query)) {
-              curatedRetailers.push(recovered);
-              added = true;
-            }
-          } else {
-            const normalized = normalizeScraperResult(recovered);
-            if (
-              normalized
-              && typeof normalized.price === 'number'
-              && normalized.price > 0
-              && !isLowQualityListing(normalized.name)
-              && !isBlockedRetailer(normalized.store)
-              && isRelevantProduct(normalized.name, query)
-            ) {
-              curatedRetailers.push(normalized);
-              added = true;
-            }
-          }
-        }
-
-        if (!added && target) {
-          unavailableOfficialRetailers.push({
-            store: target.retailer,
-            reason: 'No reliable live price found right now',
-          });
+      if (result.status === 'fulfilled' && result.value) {
+        const recovered = result.value;
+        if (!isBlockedRetailer(recovered.store) && !isLowQualityListing(recovered.name) && isRelevantProduct(recovered.name, query)) {
+          curatedRetailers.push(recovered);
+          seenStores.add(targetNorm);
+          added = true;
+          console.log(`[recovery] ${target.retailer} ✓ via parallel SerpAPI`);
         }
       }
 
-      curatedRetailers = dedupeRetailers(curatedRetailers)
-        .filter((retailer) => retailer.trustScore >= 30)
-        .sort((a, b) => {
-          const trustDelta = (b.trustScore || 0) - (a.trustScore || 0);
-          if (Math.abs(trustDelta) >= 8) return trustDelta;
-          return (a.price || Number.MAX_SAFE_INTEGER) - (b.price || Number.MAX_SAFE_INTEGER);
+      if (!added) {
+        // Find the search URL template for this retailer
+        const coreTarget = CORE_RETAILER_TARGETS.find(
+          t => normalizeStoreName(t.retailer) === normalizeStoreName(target.retailer)
+        );
+        const searchUrl = coreTarget
+          ? buildRetailerSearchUrl(coreTarget.searchUrl, query)
+          : `https://www.google.com/search?q=${encodeURIComponent(query + ' ' + target.retailer)}`;
+
+        unavailableOfficialRetailers.push({
+          store: target.retailer,
+          reason: 'No reliable live price found right now',
+          searchUrl,
         });
+      }
     }
 
-    const allSeenStores = new Set(curatedRetailers.map((retailer) => normalizeStoreName(retailer.store)));
-    const unavailableCoreRetailers = CORE_RETAILER_TARGETS
-      .filter((target) => !allSeenStores.has(normalizeStoreName(target.retailer)))
-      .map((target) => createUnavailableRetailerEntry({
-        retailer: target.retailer,
-        searchUrl: target.searchUrl,
-        query,
-        trust: target.trust,
-        reason: 'Currently unavailable',
-      }));
-
-    curatedRetailers = dedupeRetailers([...curatedRetailers, ...unavailableCoreRetailers])
+    curatedRetailers = dedupeRetailers(curatedRetailers)
       .filter((retailer) => retailer.trustScore >= 30)
       .sort((a, b) => {
-        const aUnavailable = Boolean(a.searchOnly || !a.price);
-        const bUnavailable = Boolean(b.searchOnly || !b.price);
-        if (aUnavailable !== bUnavailable) return aUnavailable ? 1 : -1;
         const trustDelta = (b.trustScore || 0) - (a.trustScore || 0);
         if (Math.abs(trustDelta) >= 8) return trustDelta;
         return (a.price || Number.MAX_SAFE_INTEGER) - (b.price || Number.MAX_SAFE_INTEGER);
       });
+
+    // NOTE: We no longer add "unavailable" placeholder cards for missing core
+    // retailers.  Those stores are already listed in the amber "Official Store
+    // Check" banner — duplicating them as full cards just clutters the page and
+    // makes the app look broken.  Only retailers with REAL prices get a card.
 
     console.log(`[search] Found ${curatedRetailers.length} curated results.`);
     console.log(`[search] Stores: ${[...new Set(curatedRetailers.map(r => r.store))].join(', ')}`);
@@ -1245,16 +1224,19 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/redirect/:id', async (req, res) => {
   const target = redirectTargets.get(req.params.id);
   if (!target) {
-    return res.status(404).send('Redirect target not found');
+    // Return a Google fallback instead of 404 so the button always works
+    return res.json({ url: 'https://www.google.com/search?q=buy+online+india' });
   }
 
   const apiKey = process.env.SERPAPI_API_KEY;
   const resolvedUrl = await resolveDirectMerchantUrl(target, apiKey);
   if (!resolvedUrl) {
-    return res.status(404).send('Merchant URL unavailable');
+    return res.json({ url: buildRedirectFallbackUrl(target) });
   }
 
-  res.redirect(302, resolvedUrl);
+  // Return JSON — the frontend will window.open() the URL directly.
+  // This avoids issues where the Vite dev-server proxy eats 302 headers.
+  res.json({ url: resolvedUrl });
 });
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));

@@ -50,10 +50,27 @@ const Login = () => {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
+        options: {
+          redirectTo: window.location.origin + '/dashboard',
+        }
       });
       if (error) throw error;
     } catch (err) {
       toast.error(err.message || "Could not sign in with Google");
+    }
+  };
+
+  const signInWithGithub = async () => {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'github',
+        options: {
+          redirectTo: window.location.origin + '/dashboard',
+        }
+      });
+      if (error) throw error;
+    } catch (err) {
+      toast.error(err.message || "Could not sign in with GitHub");
     }
   };
 
@@ -161,7 +178,7 @@ const Login = () => {
              <div className="w-5 h-5 bg-red-500 rounded flex items-center justify-center text-white text-[10px]">G</div>
              <span>Google</span>
           </button>
-          <button className="flex items-center justify-center space-x-2 py-3.5 border border-neutral-800 rounded-2xl hover:bg-neutral-800/50 transition-all text-xs font-bold text-neutral-300">
+          <button type="button" onClick={signInWithGithub} className="flex items-center justify-center space-x-2 py-3.5 border border-neutral-800 rounded-2xl hover:bg-neutral-800/50 transition-all text-xs font-bold text-neutral-300">
              <Github size={18} className="text-white" />
              <span>GitHub</span>
           </button>

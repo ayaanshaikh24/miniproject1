@@ -1140,21 +1140,35 @@ app.get('/api/search', async (req, res) => {
           reason: 'No reliable live price found right now',
           searchUrl,
         });
+
+        // Also add as a retailer card (not just a banner link) so users see ALL retailers
+        curatedRetailers.push(createRetailerEntry({
+          name: query,
+          price: 0,
+          store: target.retailer,
+          rating: 0,
+          reviews: 0,
+          url: searchUrl,
+          image: '',
+          source: 'unavailable-placeholder',
+          unavailableReason: 'No reliable live price found right now',
+          searchOnly: true,
+        }));
       }
     }
 
     curatedRetailers = dedupeRetailers(curatedRetailers)
-      .filter((retailer) => retailer.trustScore >= 30)
+      .filter((retailer) => retailer.searchOnly || retailer.trustScore >= 30)
       .sort((a, b) => {
+        // Put unavailable/searchOnly retailers at the bottom
+        if (a.searchOnly && !b.searchOnly) return 1;
+        if (!a.searchOnly && b.searchOnly) return -1;
         const trustDelta = (b.trustScore || 0) - (a.trustScore || 0);
         if (Math.abs(trustDelta) >= 8) return trustDelta;
         return (a.price || Number.MAX_SAFE_INTEGER) - (b.price || Number.MAX_SAFE_INTEGER);
       });
 
-    // NOTE: We no longer add "unavailable" placeholder cards for missing core
-    // retailers.  Those stores are already listed in the amber "Official Store
-    // Check" banner — duplicating them as full cards just clutters the page and
-    // makes the app look broken.  Only retailers with REAL prices get a card.
+    // Now showing ALL retailers including unavailable ones as cards
 
     console.log(`[search] Found ${curatedRetailers.length} curated results.`);
     console.log(`[search] Stores: ${[...new Set(curatedRetailers.map(r => r.store))].join(', ')}`);

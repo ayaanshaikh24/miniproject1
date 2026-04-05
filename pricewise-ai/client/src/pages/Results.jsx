@@ -118,16 +118,9 @@ const Results = () => {
   const cachedAt = data?.cachedAt || '';
   const bestDealPrice = data?.bestDealPrice;
 
-  // Split retailers into those with real prices vs unavailable/searchOnly.
-  // Unavailable entries are shown in the amber banner, not as full cards.
-  const retailers = allRetailers.filter(r => r.price && r.price > 0 && !r.searchOnly);
-  const unavailableFromCards = allRetailers
-    .filter(r => !r.price || r.price <= 0 || r.searchOnly)
-    .map(r => ({ store: r.store, reason: r.unavailableReason || 'No live price found', searchUrl: r.url || '' }));
-  const unavailableOfficialRetailers = [
-    ...(data?.unavailableOfficialRetailers || []),
-    ...unavailableFromCards,
-  ];
+  // Include all retailers in results, including those without live prices
+  const retailers = allRetailers;
+  const unavailableOfficialRetailers = data?.unavailableOfficialRetailers || [];
 
   if (retailers.length === 0) {
     return (

@@ -60,7 +60,10 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
   const handleBuyNow = useCallback(async (e) => {
     e.preventDefault();
     const rawUrl = retailer?.url || '';
-    if (!rawUrl || rawUrl === '#') return;
+    
+    // Always try to open something - if no URL, fall back to Google search
+    const searchTerm = [retailer?.name || '', retailer?.store || '', 'india'].filter(Boolean).join(' ');
+    const fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(searchTerm)}`;
 
     // If it's a redirect API URL, resolve it server-side first
     if (rawUrl.startsWith('/api/redirect/')) {
@@ -68,19 +71,18 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
       try {
         const res = await fetch(rawUrl);
         const data = await res.json();
-        if (data?.url) {
-          window.open(data.url, '_blank', 'noopener,noreferrer');
-        }
+        window.open(data?.url || fallbackUrl, '_blank', 'noopener,noreferrer');
       } catch {
-        // fallback: search for the product on Google
-        const searchTerm = [retailer?.name || '', retailer?.store || '', 'india'].filter(Boolean).join(' ');
-        window.open(`https://www.google.com/search?q=${encodeURIComponent(searchTerm)}`, '_blank', 'noopener,noreferrer');
+        window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
       } finally {
         setLoadingUrl(false);
       }
-    } else {
+    } else if (rawUrl && rawUrl !== '#') {
       // Direct URL (search fallback, known site URL, etc.) — open immediately
       window.open(rawUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      // No URL - fall back to Google search
+      window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
     }
   }, [retailer?.url, retailer?.store, retailer?.name]);
 
@@ -240,14 +242,12 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
           onClick={handleBuyNow}
           disabled={loadingUrl}
           className={`w-full md:w-44 flex items-center justify-center space-x-2 py-3.5 rounded-2xl font-black shadow-lg transition-all disabled:opacity-60 disabled:cursor-wait ${
-            isUnavailable
-              ? 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600 cursor-pointer'
-              : actualBestDeal
+            actualBestDeal
               ? 'bg-emerald-500 text-white hover:bg-emerald-400'
               : 'bg-white text-black hover:bg-neutral-200'
           }`}
         >
-          <span>{loadingUrl ? 'Opening…' : isUnavailable ? 'Check Site' : 'Buy Now'}</span>
+          <span>{loadingUrl ? 'Opening…' : 'Buy Now'}</span>
           <ExternalLink size={16} />
         </button>
       </div>

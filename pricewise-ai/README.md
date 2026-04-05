@@ -1,16 +1,57 @@
-# React + Vite
+# PriceWise AI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Price comparison app with live retailer scraping, trust scoring, review aggregation, and price alerts.
 
-Currently, two official plugins are available:
+## Project Structure
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `client/`: React + Vite frontend
+- `server/`: Express API + scraper and review services
 
-## React Compiler
+## Prerequisites
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Node.js 20+
+- `SERPAPI_API_KEY` in `server/.env`
 
-## Expanding the ESLint configuration
+## Install
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm run install:all
+```
+
+## Run
+
+```bash
+npm run dev
+```
+
+This starts:
+
+- frontend at `http://localhost:5173`
+- backend at `http://localhost:3001`
+
+## Stability Checks (Permanent Smoke Test)
+
+Run this any time after starting the backend:
+
+```bash
+npm run verify:smoke
+```
+
+It validates:
+
+- API health endpoint
+- search payload shape and live retailer cards
+- reviews payload shape and live review entries
+
+Server-only alternative:
+
+```bash
+cd server
+npm run smoke
+```
+
+## Notes
+
+- Unavailable retailer cards are intentionally removed from the main result list.
+- Retailers without live prices remain visible in the unavailable retailer section.
+- Retailer logos use local vector rendering to avoid blurred/remote-host failures.

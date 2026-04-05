@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "client": "npm run dev --prefix client",
-    "server": "node server/index.js",
+    "server": "node server/scripts/startServer.js",
+    "verify:smoke": "node server/scripts/smokeCheck.js",
     "install:all": "npm install && npm install --prefix client && npm install --prefix server"
   },
   "dependencies": {

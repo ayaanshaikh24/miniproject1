@@ -5,6 +5,45 @@ import TrustScore from '../pricing/TrustScore';
 
 const PRODUCT_FALLBACK_IMAGE = '/product-placeholder.svg';
 
+const RETAILER_BADGE_META = {
+  amazon: { bg: '#111827', fg: '#f59e0b' },
+  flipkart: { bg: '#1d4ed8', fg: '#ffffff' },
+  croma: { bg: '#0f172a', fg: '#67e8f9' },
+  'reliance digital': { bg: '#7f1d1d', fg: '#ffffff' },
+  jiomart: { bg: '#4338ca', fg: '#ffffff' },
+  'vijay sales': { bg: '#2563eb', fg: '#ffffff' },
+  'tata cliq': { bg: '#be123c', fg: '#ffffff' },
+  snapdeal: { bg: '#dc2626', fg: '#ffffff' },
+  meesho: { bg: '#7e22ce', fg: '#ffffff' },
+  nykaa: { bg: '#111827', fg: '#f472b6' },
+  myntra: { bg: '#1f2937', fg: '#f43f5e' },
+  shopclues: { bg: '#0f172a', fg: '#22d3ee' },
+  'tata neu': { bg: '#1e293b', fg: '#f97316' },
+  'bajaj finserv markets': { bg: '#1e3a8a', fg: '#ffffff' },
+};
+
+function normalizeStoreKey(store) {
+  return String(store || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function buildStoreLogoDataUrl(store, meta) {
+  const label = String(store || 'Store').trim().slice(0, 20);
+  const bg = meta?.bg || '#111827';
+  const fg = meta?.fg || '#ffffff';
+  const fontSize = label.length > 12 ? 56 : 66;
+  const baseline = 160;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="540" height="320" viewBox="0 0 540 320"><rect width="540" height="320" rx="36" fill="${bg}"/><text x="270" y="${baseline}" text-anchor="middle" fill="${fg}" font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="700">${label}</text></svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+function getRetailerLogo(store) {
+  const key = normalizeStoreKey(store);
+  if (!key) return buildStoreLogoDataUrl('Store');
+  const compact = key.replace(/\s+/g, '');
+  const meta = RETAILER_BADGE_META[key] || RETAILER_BADGE_META[compact] || null;
+  return buildStoreLogoDataUrl(store, meta);
+}
+
 function buildInlineImageFallback(label) {
   const safeLabel = String(label || 'Product').slice(0, 28);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#111827"/><stop offset="100%" stop-color="#1f2937"/></linearGradient></defs><rect width="240" height="240" rx="24" fill="url(#g)"/><rect x="56" y="48" width="128" height="144" rx="14" fill="#0b1220" stroke="#334155"/><text x="120" y="214" text-anchor="middle" fill="#e5e7eb" font-family="Arial, sans-serif" font-size="15" font-weight="700">${safeLabel}</text></svg>`;
@@ -31,16 +70,18 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
   const actualBestDeal = retailer?.isBestDeal ?? isBestDeal;
   const priceDiff = retailer?.priceDifference;
   const priceDiffText = retailer?.priceDifferenceText;
+  const retailerLogo = useMemo(() => getRetailerLogo(retailer?.store), [retailer?.store]);
 
   const imageSources = useMemo(() => {
     const label = retailer?.name || retailer?.store || 'Product';
     return [
       retailer?.image,
       ...(Array.isArray(retailer?.imageFallbacks) ? retailer.imageFallbacks : []),
+      retailerLogo,
       PRODUCT_FALLBACK_IMAGE,
       buildInlineImageFallback(label),
     ].filter(Boolean);
-  }, [retailer?.image, retailer?.imageFallbacks, retailer?.name, retailer?.store]);
+  }, [retailer?.image, retailer?.imageFallbacks, retailer?.name, retailer?.store, retailerLogo]);
 
   const [imageIndex, setImageIndex] = useState(0);
 
@@ -122,11 +163,21 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
         isUnavailable ? 'bg-neutral-800 border border-neutral-700' : 'bg-white'
       }`}>
         {isUnavailable ? (
-          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-neutral-700 to-neutral-900 rounded-lg">
-            <span className="text-2xl font-black text-white/80">
-              {(retailer.store || 'S')[0].toUpperCase()}
-            </span>
-          </div>
+          retailerLogo ? (
+            <img
+              src={retailerLogo}
+              alt={`${retailer.store || 'Retailer'} logo`}
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              className="object-contain h-full w-full rounded-lg"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-neutral-700 to-neutral-900 rounded-lg">
+              <span className="text-2xl font-black text-white/80">
+                {(retailer.store || 'S')[0].toUpperCase()}
+              </span>
+            </div>
+          )
         ) : (
           <img
             src={imageSources[imageIndex] || PRODUCT_FALLBACK_IMAGE}
@@ -160,6 +211,18 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
             <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-300 bg-neutral-800">
               <span className={`w-1.5 h-1.5 rounded-full ${getStockColor(retailer.stockStatus)}`} />
               {getStockText(retailer.stockStatus)}
+            </span>
+          )}
+
+          {!isUnavailable && retailer?.stalePrice && (
+            <span className="inline-flex items-center justify-center rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest bg-amber-500/20 text-amber-300 border border-amber-400/30">
+              Latest Known Price
+            </span>
+          )}
+
+          {!isUnavailable && !retailer?.stalePrice && (
+            <span className="inline-flex items-center justify-center rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest bg-emerald-500/15 text-emerald-300 border border-emerald-400/30">
+              Live Price
             </span>
           )}
 

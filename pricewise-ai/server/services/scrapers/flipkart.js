@@ -60,7 +60,10 @@ export async function scrapeFlipkart(query) {
 
           if (!title) return null;
 
-          const ratingMatch = text.match(/(\d(?:\.\d)?)\s*★/);
+          const ratingFromBadge = Array.from(card.querySelectorAll('div, span'))
+            .map((el) => (el.textContent || '').trim())
+            .find((value) => /^([1-5](?:\.\d)?)\s*★?$/.test(value));
+          const ratingMatch = (ratingFromBadge || text).match(/([1-5](?:\.\d)?)\s*★?/);
           const ratingReviewMatch = text.match(/([\d,]+)\s+Ratings?\s*&\s*([\d,]+)\s+Reviews?/i);
           const reviewMatch = text.match(/([\d,]+)\s+Reviews?/i);
           const ratingCount = ratingReviewMatch ? parseInt(ratingReviewMatch[1].replace(/,/g, ''), 10) : 0;
@@ -70,12 +73,21 @@ export async function scrapeFlipkart(query) {
               ? parseInt(reviewMatch[1].replace(/,/g, ''), 10)
               : 0;
 
+          const imageEl = card.querySelector('img');
+          const srcset = imageEl?.getAttribute('srcset') || '';
+          const firstSrcset = srcset.split(',')[0]?.trim().split(' ')[0] || '';
+          const imageUrl = imageEl?.getAttribute('src')
+            || imageEl?.getAttribute('data-src')
+            || imageEl?.getAttribute('data-lazy-src')
+            || firstSrcset
+            || '';
+
           return {
             title,
             href: link.getAttribute('href') || '',
             price,
             mrp,
-            image: card.querySelector('img')?.getAttribute('src') || '',
+            image: imageUrl,
             rating: ratingMatch ? parseFloat(ratingMatch[1]) : 0,
             reviewCount: reviewCount || ratingCount,
           };
@@ -93,8 +105,49 @@ export async function scrapeFlipkart(query) {
 
     if (product) {
       const productUrl = normalizeProductUrl('https://www.flipkart.com', product.href);
-      const rating = product.rating;
-      const reviewCount = product.reviewCount;
+      let rating = product.rating;
+      let reviewCount = product.reviewCount;
+      let image = (product.image && !product.image.includes('placeholder')) ? product.image : '';
+
+      // Search cards often miss rating/image; enrich from PDP when needed.
+      if (!rating || !image) {
+        try {
+          const enrich = await withRetailerPage(productUrl, async (page) => {
+            await page.waitForTimeout(1200);
+            return await page.evaluate(() => {
+              const clean = (v) => (v || '').replace(/\s+/g, ' ').trim();
+              const parseCount = (value) => {
+                const match = String(value || '').match(/[\d,]+/);
+                return match ? parseInt(match[0].replace(/,/g, ''), 10) : 0;
+              };
+
+              const ogImage = document.querySelector('meta[property="og:image"]')?.getAttribute('content') || '';
+              const imgSrc = document.querySelector('img[src], img[data-src]')?.getAttribute('src')
+                || document.querySelector('img[data-src]')?.getAttribute('data-src')
+                || '';
+
+              const bodyText = clean(document.body?.textContent || '');
+              const ratingMatch = bodyText.match(/\b([1-5](?:\.\d)?)\s*★/);
+              const rating = ratingMatch ? parseFloat(ratingMatch[1]) : 0;
+              const reviewMatch = bodyText.match(/([\d,]+)\s+Reviews?/i);
+              const reviewCount = reviewMatch ? parseCount(reviewMatch[1]) : 0;
+
+              return {
+                image: ogImage || imgSrc,
+                rating,
+                reviewCount,
+              };
+            });
+          });
+
+          if (!image && enrich?.image) image = enrich.image;
+          if (!rating && enrich?.rating) rating = enrich.rating;
+          if (!reviewCount && enrich?.reviewCount) reviewCount = enrich.reviewCount;
+        } catch {
+          // keep existing values
+        }
+      }
+
       const discountPct = product.mrp > product.price ? Math.round(((product.mrp - product.price) / product.mrp) * 100) : 0;
 
       return {
@@ -119,7 +172,7 @@ export async function scrapeFlipkart(query) {
         rating,
         review_count: reviewCount,
         productName: product.title,
-        image: (product.image && !product.image.includes('placeholder')) ? product.image : '',
+        image,
         reviews: [],
         review_source: 'Flipkart',
       };

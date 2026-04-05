@@ -8,6 +8,10 @@
  *   4. If all else fails, use google search for "[product] reviews" to get review snippets
  */
 
+import { searchSiteProductUrl } from './scrapers/siteSearch.js';
+import { scrapeAmazonProductInsights } from './scrapers/amazon.js';
+import { scrapeFlipkartProductInsights } from './scrapers/flipkart.js';
+
 const REVIEW_CACHE = new Map();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -293,6 +297,67 @@ async function fetchGoogleReviewSnippets(query, apiKey) {
   }
 }
 
+// ── Strategy 5: Direct retailer page review scrape fallback ──
+async function fetchRetailerPageReviewFallback(query) {
+  const fallbacks = [
+    {
+      retailer: 'Amazon',
+      site: 'www.amazon.in',
+      scrapeInsights: scrapeAmazonProductInsights,
+    },
+    {
+      retailer: 'Flipkart',
+      site: 'www.flipkart.com',
+      scrapeInsights: scrapeFlipkartProductInsights,
+    },
+  ];
+
+  const collected = [];
+
+  for (const entry of fallbacks) {
+    try {
+      const productUrl = await searchSiteProductUrl({ site: entry.site, query });
+      if (!productUrl) continue;
+
+      const insights = await entry.scrapeInsights(productUrl);
+      const reviews = Array.isArray(insights?.reviews) ? insights.reviews : [];
+      if (reviews.length === 0) continue;
+
+      for (const review of reviews) {
+        const reviewer = review.reviewer || `${entry.retailer} customer`;
+        const text = review.text || review.snippet || review.body || '';
+        if (!text || text.length < 20) continue;
+
+        const mapped = {
+          reviewer,
+          avatar: getInitials(reviewer),
+          location: 'India',
+          rating: Number(review.rating) || 0,
+          title: review.title || '',
+          text,
+          retailer: entry.retailer,
+          retailerColor: getRetailerColor(entry.retailer),
+          verified: true,
+          helpful: 0,
+          notHelpful: 0,
+          date: '',
+          images: 0,
+          genuineScore: computeGenuineScore({
+            verified_purchase: true,
+            snippet: text,
+          }),
+        };
+
+        collected.push(mapped);
+      }
+    } catch (err) {
+      console.warn(`[reviews] ${entry.retailer} page fallback failed:`, err.message);
+    }
+  }
+
+  return collected;
+}
+
 /**
  * Compute aggregate review statistics
  */
@@ -393,6 +458,14 @@ export async function fetchProductReviews(query, apiKey) {
       console.log('[reviews] No reviews from primary sources, trying Google search snippets...');
       const searchSnippets = await fetchGoogleReviewSnippets(query, apiKey);
       allReviews.push(...searchSnippets);
+    }
+
+    // Strategy 5: Direct retailer page scrape as a final fallback.
+    // Also enriches thin payloads where APIs return very few reviews.
+    if (allReviews.length < 4) {
+      console.log('[reviews] Using retailer page fallback for additional live reviews...');
+      const retailerFallbackReviews = await fetchRetailerPageReviewFallback(query);
+      allReviews.push(...retailerFallbackReviews);
     }
 
     // Deduplicate by reviewer + text similarity

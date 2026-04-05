@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js"
+    "start": "node scripts/startServer.js",
+    "dev": "node --watch index.js",
+    "smoke": "node scripts/smokeCheck.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

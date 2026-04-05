@@ -1,5 +1,28 @@
 import { supabase, isSupabaseReady } from './supabase.js';
 
+const PHONE_QUERY_KEYWORDS = [
+  'iphone',
+  'samsung',
+  'oneplus',
+  'pixel',
+  'realme',
+  'redmi',
+  'xiaomi',
+  'oppo',
+  'vivo',
+  'nothing',
+  'motorola',
+  'moto',
+  'mobile',
+  'phone',
+  'smartphone',
+];
+
+function isPhoneLikeQuery(query = '') {
+  const q = String(query || '').toLowerCase();
+  return PHONE_QUERY_KEYWORDS.some((keyword) => q.includes(keyword));
+}
+
 export async function savePriceSnapshots(query, retailers) {
   if (!isSupabaseReady() || !Array.isArray(retailers) || retailers.length === 0) return;
   const key = String(query || '').trim().toLowerCase();
@@ -37,7 +60,7 @@ export async function getPriceHistory(query, days = 30) {
 
     const { data, error } = await supabase
       .from('price_history')
-      .select('retailer, price, trust_score, stock_status, recorded_at')
+      .select('retailer, price, trust_score, stock_status, image_url, recorded_at')
       .eq('product_query', key)
       .gte('recorded_at', since.toISOString())
       .order('recorded_at', { ascending: true });
@@ -46,7 +69,11 @@ export async function getPriceHistory(query, days = 30) {
       console.warn('[price-history] read error:', error.message);
       return [];
     }
-    return data || [];
+    const rows = data || [];
+
+    // Filter out corrupted/implausible points (for example accessory prices for phone queries).
+    const minPrice = isPhoneLikeQuery(key) ? 5000 : 1;
+    return rows.filter((row) => Number(row?.price) >= minPrice && Number(row?.trust_score || 0) >= 60);
   } catch (err) {
     console.warn('[price-history] read error:', err.message);
     return [];

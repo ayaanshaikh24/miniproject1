@@ -37,7 +37,9 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 const PriceHistoryChart = ({ history = [] }) => {
-  if (!history || history.length === 0) {
+  const cleanHistory = (history || []).filter((h) => Number(h?.price) > 0);
+
+  if (cleanHistory.length === 0) {
     return (
       <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-8 text-center">
         <p className="text-neutral-500 text-sm">No price history data yet. Keep searching to build trends!</p>
@@ -45,10 +47,29 @@ const PriceHistoryChart = ({ history = [] }) => {
     );
   }
 
-  const retailers = [...new Set(history.map(h => h.retailer))];
+  const retailerPointCount = cleanHistory.reduce((acc, row) => {
+    const key = row.retailer || 'Unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const retailers = [...new Set(cleanHistory.map((h) => h.retailer))]
+    .filter((retailer) => (retailerPointCount[retailer] || 0) >= 2)
+    .sort((a, b) => (retailerPointCount[b] || 0) - (retailerPointCount[a] || 0))
+    .slice(0, 6);
+
+  if (retailers.length === 0) {
+    return (
+      <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-8 text-center">
+        <p className="text-neutral-500 text-sm">Not enough clean price history points yet. Keep searching to build trends!</p>
+      </div>
+    );
+  }
+
   const dateMap = {};
 
-  history.forEach(h => {
+  cleanHistory.forEach(h => {
+    if (!retailers.includes(h.retailer)) return;
     const date = formatDate(h.recorded_at);
     if (!dateMap[date]) dateMap[date] = { date };
     dateMap[date][h.retailer] = h.price;

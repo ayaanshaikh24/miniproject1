@@ -218,6 +218,13 @@ export function isRelevantProduct(productName, query) {
 
   if (queryWords.length === 0) return true;
 
+  // If query contains model numbers (e.g. "15" in "iphone 15"),
+  // they must be present in the title to avoid generic category pages.
+  const numberTokens = queryWords.filter(w => /^\d+$/.test(w));
+  for (const num of numberTokens) {
+    if (!titleWords.includes(num)) return false;
+  }
+
   // ── 2. Token match (≥70% of query words must appear in title) ────────────
   const importantWords = queryWords.filter(w => w.length >= 3);
   const toMatch = importantWords.length > 0 ? importantWords : queryWords;
@@ -228,7 +235,6 @@ export function isRelevantProduct(productName, query) {
   // For each number in the query (e.g. "17"), find the corresponding token in
   // the title. If the title token is not exactly the query number (e.g. it's
   // "17e", "17pro", "17plus" even split across words), it's a variant → reject.
-  const numberTokens = queryWords.filter(w => /^\d+$/.test(w));
   for (const num of numberTokens) {
     // Find a title word that starts with this number
     const titleToken = titleWords.find(w => w.startsWith(num));

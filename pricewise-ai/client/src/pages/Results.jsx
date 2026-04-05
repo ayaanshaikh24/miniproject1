@@ -177,6 +177,10 @@ const Results = () => {
     const bUnavailable = Boolean(b.searchOnly || !b.price);
     if (aUnavailable !== bUnavailable) return aUnavailable ? 1 : -1;
 
+    const aStale = Boolean(a.stalePrice);
+    const bStale = Boolean(b.stalePrice);
+    if (aStale !== bStale) return aStale ? 1 : -1;
+
     switch (sortBy) {
       case 'trust-desc':
         return (b.trustScore || 0) - (a.trustScore || 0);

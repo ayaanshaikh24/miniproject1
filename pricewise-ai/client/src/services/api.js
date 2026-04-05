@@ -1,6 +1,33 @@
 const API_BASE = '/api';
 const SEARCH_TIMEOUT_MS = 35000;
 
+function getSearchCacheKey(query) {
+  return `pricewise:last-search:${String(query || '').trim().toLowerCase()}`;
+}
+
+function getCachedSearchPayload(query) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    const raw = window.localStorage.getItem(getSearchCacheKey(query));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.retailers) || parsed.retailers.length === 0) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedSearchPayload(query, payload) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    if (!payload || !Array.isArray(payload.retailers) || payload.retailers.length === 0) return;
+    window.localStorage.setItem(getSearchCacheKey(query), JSON.stringify(payload));
+  } catch {
+    // ignore localStorage write errors
+  }
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -22,6 +49,25 @@ export async function searchProductsLive(query, { fresh = false } = {}) {
       clearTimeout(timer);
       if (!res.ok) throw new Error(`API error ${res.status}`);
       const payload = await res.json();
+
+      // If backend is up but temporarily returns no live results, prefer last-good data.
+      const isTemporaryOutage =
+        Array.isArray(payload?.retailers)
+        && payload.retailers.length === 0
+        && String(payload?.warning || '').toLowerCase().includes('temporarily unavailable');
+
+      if (isTemporaryOutage) {
+        const cached = getCachedSearchPayload(query);
+        if (cached) {
+          return {
+            ...cached,
+            warning: 'Showing last good results. Live search is temporarily unavailable.',
+            stale: true,
+          };
+        }
+      }
+
+      setCachedSearchPayload(query, payload);
       return payload;
     } catch (error) {
       clearTimeout(timer);
@@ -31,13 +77,16 @@ export async function searchProductsLive(query, { fresh = false } = {}) {
   }
 
   console.warn('[search] live request failed:', lastError?.message);
-  return {
-    query,
-    name: query,
-    retailers: [],
-    unavailableOfficialRetailers: [],
-    warning: 'Live search is temporarily unavailable. Please try again.',
-  };
+  const cached = getCachedSearchPayload(query);
+  if (cached) {
+    return {
+      ...cached,
+      warning: 'Showing last good results. Could not reach live search right now.',
+      stale: true,
+    };
+  }
+
+  throw lastError || new Error('Live search is temporarily unavailable.');
 }
 
 /**

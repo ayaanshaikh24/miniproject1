@@ -21,6 +21,16 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const redirectTargets = new Map();
 const immersiveStoreCache = new Map();
+let server;
+let isShuttingDown = false;
+
+function hasAnyLivePrice(retailers = []) {
+  if (!Array.isArray(retailers)) return false;
+  return retailers.some((retailer) => {
+    const price = Number(retailer?.price) || 0;
+    return !retailer?.searchOnly && price > 0;
+  });
+}
 
 app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:4173'] }));
 app.use(express.json());
@@ -391,6 +401,16 @@ const MAIN_SERPAPI_TIMEOUT_MS = 15000;
 const SCRAPER_TIMEOUT_MS = 12000;
 const RECOVERY_TIMEOUT_MS = 12000;
 
+const OFFICIAL_SITE_RECOVERY_RETAILERS = new Set([
+  'amazon',
+  'flipkart',
+  'croma',
+  'reliance digital',
+  'jiomart',
+  'vijay sales',
+  'tata cliq',
+]);
+
 async function withTimeout(task, timeoutMs, fallbackValue = null) {
   return await Promise.race([
     Promise.resolve().then(task),
@@ -424,9 +444,16 @@ async function fetchOfficialSerpapiFallback({ query, target, apiKey }) {
     const picked = candidates.find((item) => {
       const storeNormalized = normalizeStoreName(item.source || '');
       const hasMatchingStore = targetStores.has(storeNormalized);
-      const hasPrice = Number(item.extracted_price) > 0 || Number.parseFloat(String(item.price || '').replace(/[^0-9.]/g, '')) > 0;
+      const itemLink = String(item.link || item.product_link || '');
+      const linkMatchesTarget = itemLink.includes(target.site);
+      const extractedPrice = Number(item.extracted_price) || Number.parseFloat(String(item.price || '').replace(/[^0-9.]/g, '')) || 0;
+      const hasPrice = extractedPrice > 0;
       const title = item.title || query;
-      return hasMatchingStore && hasPrice && isRelevantProduct(title, query) && !isLowQualityListing(title);
+      return (hasMatchingStore || linkMatchesTarget)
+        && hasPrice
+        && isRelevantProduct(title, query)
+        && !isLowQualityListing(title)
+        && !isLikelyAccessoryListing(title, query, extractedPrice);
     });
 
     if (!picked) return null;
@@ -490,7 +517,8 @@ async function fetchOfficialOrganicFallback({ query, target, apiKey }) {
       return link.includes(target.site)
         && extractedPrice > 0
         && isRelevantProduct(title, query)
-        && !isLowQualityListing(title);
+        && !isLowQualityListing(title)
+        && !isLikelyAccessoryListing(title, query, extractedPrice);
     });
 
     if (!picked) return null;
@@ -697,6 +725,55 @@ function isLowQualityListing(name = '') {
   return FAKE_LISTING_KEYWORDS.test(name);
 }
 
+const PHONE_QUERY_KEYWORDS = [
+  'iphone',
+  'samsung',
+  'oneplus',
+  'pixel',
+  'realme',
+  'redmi',
+  'xiaomi',
+  'oppo',
+  'vivo',
+  'nothing',
+  'motorola',
+  'moto',
+  'mobile',
+  'phone',
+  'smartphone',
+];
+
+const ACCESSORY_LISTING_PATTERN = /(case|cover|back\s*cover|bumper|screen\s*guard|tempered\s*glass|protector|charger|adapter|cable|mag\s*safe|magsafe|wireless\s*charging|lens\s*protector|camera\s*protector|phone\s*skin|pouch|holder|mount|tripod)/i;
+
+function isPhoneLikeQuery(query = '') {
+  const q = String(query || '').toLowerCase();
+  return PHONE_QUERY_KEYWORDS.some((keyword) => q.includes(keyword));
+}
+
+function hasSufficientCoverage(query = '', retailers = []) {
+  const liveCount = Array.isArray(retailers)
+    ? retailers.filter((retailer) => !retailer.searchOnly && Number(retailer.price) > 0).length
+    : 0;
+
+  if (isPhoneLikeQuery(query)) return liveCount >= 2;
+  return liveCount >= 1;
+}
+
+function isLikelyAccessoryListing(name = '', query = '', price = 0) {
+  const normalizedName = String(name || '');
+  const normalizedQuery = String(query || '');
+
+  if (ACCESSORY_LISTING_PATTERN.test(normalizedName) && !ACCESSORY_LISTING_PATTERN.test(normalizedQuery)) {
+    return true;
+  }
+
+  if (isPhoneLikeQuery(normalizedQuery) && Number(price) > 0 && Number(price) < 5000) {
+    return true;
+  }
+
+  return false;
+}
+
 function dedupeRetailers(retailers) {
   const seen = new Set();
   return retailers.filter((retailer) => {
@@ -736,7 +813,18 @@ function computeTrustFactor({ store, url, rating, reviews, source, name, returnD
   if (ns.includes('sponsored')) penalty += 10;
   if (BLOCKED_RETAILERS.has(ns)) penalty += 40;
   if (FAKE_LISTING_KEYWORDS.test(name || '')) penalty += 20;
-  return clampScore(ratingScore + reviewScore + returnScore + officialScore - penalty);
+
+  let bonus = 0;
+  if (HIGH_TRUST_RETAILERS.has(ns) || urlMatchesTrustedRetailerDomain(url)) bonus += 16;
+  else if (MEDIUM_TRUST_RETAILERS.has(ns)) bonus += 8;
+
+  const computed = clampScore(ratingScore + reviewScore + returnScore + officialScore + bonus - penalty);
+
+  if ((HIGH_TRUST_RETAILERS.has(ns) || urlMatchesTrustedRetailerDomain(url)) && !BLOCKED_RETAILERS.has(ns) && !FAKE_LISTING_KEYWORDS.test(name || '')) {
+    return Math.max(computed, 85);
+  }
+
+  return computed;
 }
 
 function createRetailerEntry({ name, price, store, rating, reviews, url, image, source, searchOnly = false, unavailableReason = '', stockStatus = 'Check Site', deliveryDate = 'Check on site', sellerName = '', isOfficialStore = false, couponText = '', returnDays = 0 }) {
@@ -920,7 +1008,7 @@ app.get('/api/search', async (req, res) => {
   const bypassCache = req.query.fresh === '1';
 
   const cachedPayload = bypassCache ? null : await getCachedResult(query);
-  if (cachedPayload) {
+  if (cachedPayload && hasAnyLivePrice(cachedPayload.retailers)) {
     return res.json(cachedPayload);
   }
 
@@ -943,6 +1031,36 @@ app.get('/api/search', async (req, res) => {
         null,
       )
     )
+  );
+
+  // Secondary recovery path: organic search snippets (site:domain query).
+  // This catches listings that don't appear in shopping cards.
+  const prestartOrganicRecoveryPromise = Promise.allSettled(
+    OFFICIAL_RECOVERY_TARGETS.map((target) =>
+      withTimeout(
+        () => fetchOfficialOrganicFallback({ query, target, apiKey: API_KEY }),
+        RECOVERY_TIMEOUT_MS,
+        null,
+      )
+    )
+  );
+
+  const prestartOfficialSiteRecoveryPromise = Promise.allSettled(
+    OFFICIAL_RECOVERY_TARGETS.map((target) => {
+      const normalizedRetailer = normalizeStoreName(target.retailer);
+      if (!OFFICIAL_SITE_RECOVERY_RETAILERS.has(normalizedRetailer)) return Promise.resolve(null);
+
+      return withTimeout(
+        () => scrapeOfficialSiteRecovery({
+          query,
+          retailer: target.retailer,
+          site: target.site,
+          trust: target.trust,
+        }),
+        RECOVERY_TIMEOUT_MS,
+        null,
+      );
+    })
   );
 
   const scraperTasks = [
@@ -1007,7 +1125,8 @@ app.get('/api/search', async (req, res) => {
         const matchingResult = shoppingResults.find(item => {
           const src = normalizeStoreName(item.source || '');
           const target = normalizeStoreName(targetRetailer.retailer);
-          const storeMatch = src === target || src.includes(target) || target.includes(src);
+          const link = String(item.link || item.product_link || '');
+          const storeMatch = src === target || src.includes(target) || target.includes(src) || link.includes(targetRetailer.site);
           if (!storeMatch) return false;
           const title = item.title || '';
           return isRelevantProduct(title, query) && !isLowQualityListing(title);
@@ -1015,7 +1134,7 @@ app.get('/api/search', async (req, res) => {
 
         if (matchingResult) {
           const price = matchingResult.extracted_price || parseFloat(String(matchingResult.price || '').replace(/[^0-9.]/g, ''));
-          if (price && price >= 500) {
+          if (price && price >= 500 && !isLikelyAccessoryListing(matchingResult.title || query, query, price)) {
             const redirectUrl = rememberRedirectTarget({
               store: matchingResult.source || targetRetailer.retailer,
               name: matchingResult.title || query,
@@ -1039,6 +1158,65 @@ app.get('/api/search', async (req, res) => {
           }
         }
       }
+
+      // Second chance: if source labels are noisy, trust official domain links.
+      if (!retailers.some(r => normalizeStoreName(r.store) === normalizeStoreName(targetRetailer.retailer) && r.price) && shoppingResults.length > 0) {
+        const domainMatch = shoppingResults.find((item) => {
+          const link = String(item.link || item.product_link || '');
+          const title = item.title || '';
+          const price = Number(item.extracted_price) || parseFloat(String(item.price || '').replace(/[^0-9.]/g, '')) || 0;
+          return link.includes(targetRetailer.site)
+            && price >= 500
+            && isRelevantProduct(title, query)
+            && !isLowQualityListing(title)
+            && !isLikelyAccessoryListing(title, query, price);
+        });
+
+        if (domainMatch) {
+          const price = Number(domainMatch.extracted_price) || parseFloat(String(domainMatch.price || '').replace(/[^0-9.]/g, '')) || 0;
+          if (price > 0) {
+            const redirectUrl = rememberRedirectTarget({
+              store: targetRetailer.retailer,
+              name: domainMatch.title || query,
+              query,
+              price,
+              directUrl: domainMatch.link || domainMatch.product_link || '',
+              immersiveApiUrl: domainMatch.serpapi_immersive_product_api || '',
+            });
+
+            retailers.push(createRetailerEntry({
+              name: (domainMatch.title || query).substring(0, 100),
+              price,
+              store: targetRetailer.retailer,
+              rating: Number(domainMatch.rating) || 0,
+              reviews: Number(domainMatch.reviews) || 0,
+              url: redirectUrl,
+              image: domainMatch.thumbnail || '',
+              source: 'serpapi-domain-match',
+            }));
+            console.log(`[serpapi-domain-match] ${targetRetailer.retailer} ✓ ₹${price}`);
+          }
+        }
+      }
+    }
+
+    // Backfill missing image/rating from shopping results for core retailers.
+    for (const retailer of retailers) {
+      const target = CORE_RETAILER_TARGETS.find((entry) => normalizeStoreName(entry.retailer) === normalizeStoreName(retailer.store));
+      if (!target) continue;
+      if (retailer.image && retailer.rating) continue;
+
+      const enrich = shoppingResults.find((item) => {
+        const link = String(item.link || item.product_link || '');
+        const title = item.title || '';
+        return link.includes(target.site) && isRelevantProduct(title, query);
+      });
+
+      if (!enrich) continue;
+      if (!retailer.image && enrich.thumbnail) retailer.image = enrich.thumbnail;
+      if (!retailer.rating && Number(enrich.rating) > 0) retailer.rating = Number(enrich.rating);
+      if (!retailer.reviews && Number(enrich.reviews) > 0) retailer.reviews = Number(enrich.reviews);
+      if (retailer.name === query && enrich.title) retailer.name = enrich.title;
     }
 
     const pushCuratedSerpapiResult = (item, fallbackStore = 'Unknown Retailer') => {
@@ -1049,7 +1227,11 @@ app.get('/api/search', async (req, res) => {
 
       // Block: no price, blocked seller, fake listing title, or irrelevant product
       // Note: we allow any non-blocked retailer through – trust scoring handles ranking
-      if (!priceStr || isBlockedRetailer(store) || isLowQualityListing(name) || !isRelevantProduct(name, query)) {
+      if (!priceStr
+        || isBlockedRetailer(store)
+        || isLowQualityListing(name)
+        || !isRelevantProduct(name, query)
+        || isLikelyAccessoryListing(name, query, priceStr)) {
         return;
       }
 
@@ -1104,7 +1286,39 @@ app.get('/api/search', async (req, res) => {
     const seenStores = new Set(curatedRetailers.map((r) => normalizeStoreName(r.store)));
     const unavailableOfficialRetailers = [];
 
-    const preRecoveryResults = await prestartRecoveryPromise;
+    const recentHistoryRows = await getPriceHistory(query, 30);
+    const latestPriceByStore = new Map();
+    for (const row of recentHistoryRows) {
+      const storeKey = normalizeStoreName(row.retailer);
+      const existing = latestPriceByStore.get(storeKey);
+      const rowTime = new Date(row.recorded_at || 0).getTime();
+      const existingTime = existing ? new Date(existing.recorded_at || 0).getTime() : 0;
+      if (!existing || rowTime > existingTime) {
+        latestPriceByStore.set(storeKey, row);
+      }
+    }
+
+    const livePriceBaseline = (() => {
+      const prices = curatedRetailers
+        .filter((r) => !r.searchOnly && Number(r.price) > 0)
+        .map((r) => Number(r.price))
+        .sort((a, b) => a - b);
+      if (prices.length === 0) return 0;
+      const mid = Math.floor(prices.length / 2);
+      return prices.length % 2 === 0 ? (prices[mid - 1] + prices[mid]) / 2 : prices[mid];
+    })();
+
+    for (const retailer of curatedRetailers) {
+      if (retailer.image) continue;
+      const latest = latestPriceByStore.get(normalizeStoreName(retailer.store));
+      if (latest?.image_url) retailer.image = latest.image_url;
+    }
+
+    const [preRecoveryResults, preOrganicRecoveryResults, preOfficialSiteRecoveryResults] = await Promise.all([
+      prestartRecoveryPromise,
+      prestartOrganicRecoveryPromise,
+      prestartOfficialSiteRecoveryPromise,
+    ]);
 
     for (let i = 0; i < OFFICIAL_RECOVERY_TARGETS.length; i++) {
       const target = OFFICIAL_RECOVERY_TARGETS[i];
@@ -1127,6 +1341,77 @@ app.get('/api/search', async (req, res) => {
       }
 
       if (!added) {
+        const organicResult = preOrganicRecoveryResults[i];
+        if (organicResult?.status === 'fulfilled' && organicResult.value) {
+          const recovered = organicResult.value;
+          if (!isBlockedRetailer(recovered.store) && !isLowQualityListing(recovered.name) && isRelevantProduct(recovered.name, query)) {
+            curatedRetailers.push(recovered);
+            seenStores.add(targetNorm);
+            added = true;
+            console.log(`[recovery] ${target.retailer} ✓ via organic fallback`);
+          }
+        }
+      }
+
+      if (!added) {
+        const siteResult = preOfficialSiteRecoveryResults[i];
+        if (siteResult?.status === 'fulfilled' && siteResult.value) {
+          const normalizedSiteRecovery = normalizeScraperResult(siteResult.value);
+          if (
+            normalizedSiteRecovery
+            && !isBlockedRetailer(normalizedSiteRecovery.store)
+            && !isLowQualityListing(normalizedSiteRecovery.name)
+            && !isLikelyAccessoryListing(normalizedSiteRecovery.name, query, normalizedSiteRecovery.price)
+            && isRelevantProduct(normalizedSiteRecovery.name, query)
+          ) {
+            curatedRetailers.push(normalizedSiteRecovery);
+            seenStores.add(targetNorm);
+            added = true;
+            console.log(`[recovery] ${target.retailer} ✓ via official site scrape`);
+          }
+        }
+      }
+
+      if (!added) {
+        const historical = latestPriceByStore.get(targetNorm);
+        if (historical && Number(historical.price) > 0) {
+          const historicalPrice = Number(historical.price);
+          const historicalAgeMs = Date.now() - new Date(historical.recorded_at || 0).getTime();
+          const isFreshEnough = historicalAgeMs >= 0 && historicalAgeMs <= (7 * 24 * 60 * 60 * 1000);
+          const looksPlausible = !livePriceBaseline
+            || (historicalPrice >= livePriceBaseline * 0.7 && historicalPrice <= livePriceBaseline * 1.6);
+
+          if (!isFreshEnough || !looksPlausible) {
+            // Skip stale-history fallback when it is too old or too far from current live market range.
+            // Prevents inaccurate "best deal" cards from old/outlier snapshots.
+          } else {
+          const historyFallback = createRetailerEntry({
+            name: query,
+            price: historicalPrice,
+            store: target.retailer,
+            rating: 0,
+            reviews: 0,
+            url: `https://${target.site}`,
+            image: historical.image_url || '',
+            source: 'history-fallback',
+            stockStatus: 'Check Site',
+            deliveryDate: 'Check on site',
+            isOfficialStore: true,
+          });
+
+          curatedRetailers.push({
+            ...historyFallback,
+            stalePrice: true,
+            stalePriceNote: 'Showing latest known price from recent snapshots',
+          });
+          seenStores.add(targetNorm);
+          added = true;
+          console.log(`[recovery] ${target.retailer} ✓ via latest history snapshot`);
+          }
+        }
+      }
+
+      if (!added) {
         // Find the search URL template for this retailer
         const coreTarget = CORE_RETAILER_TARGETS.find(
           t => normalizeStoreName(t.retailer) === normalizeStoreName(target.retailer)
@@ -1140,35 +1425,27 @@ app.get('/api/search', async (req, res) => {
           reason: 'No reliable live price found right now',
           searchUrl,
         });
-
-        // Also add as a retailer card (not just a banner link) so users see ALL retailers
-        curatedRetailers.push(createRetailerEntry({
-          name: query,
-          price: 0,
-          store: target.retailer,
-          rating: 0,
-          reviews: 0,
-          url: searchUrl,
-          image: '',
-          source: 'unavailable-placeholder',
-          unavailableReason: 'No reliable live price found right now',
-          searchOnly: true,
-        }));
       }
     }
 
     curatedRetailers = dedupeRetailers(curatedRetailers)
-      .filter((retailer) => retailer.searchOnly || retailer.trustScore >= 30)
+      .filter((retailer) => {
+        if (retailer.searchOnly || Number(retailer.price) <= 0 || retailer.trustScore < 30) return false;
+
+        if (isPhoneLikeQuery(query)) {
+          const trustedForPhones = retailer.isOfficialStore
+            || isKnownTrustedRetailer(retailer.store, retailer.url)
+            || (retailer.trustScore || 0) >= 80;
+          if (!trustedForPhones) return false;
+        }
+
+        return true;
+      })
       .sort((a, b) => {
-        // Put unavailable/searchOnly retailers at the bottom
-        if (a.searchOnly && !b.searchOnly) return 1;
-        if (!a.searchOnly && b.searchOnly) return -1;
         const trustDelta = (b.trustScore || 0) - (a.trustScore || 0);
         if (Math.abs(trustDelta) >= 8) return trustDelta;
         return (a.price || Number.MAX_SAFE_INTEGER) - (b.price || Number.MAX_SAFE_INTEGER);
       });
-
-    // Now showing ALL retailers including unavailable ones as cards
 
     console.log(`[search] Found ${curatedRetailers.length} curated results.`);
     console.log(`[search] Stores: ${[...new Set(curatedRetailers.map(r => r.store))].join(', ')}`);
@@ -1182,7 +1459,7 @@ app.get('/api/search', async (req, res) => {
     let bestPrice = Infinity;
     let bestTrust = -1;
     curatedRetailers.forEach((r, i) => {
-      if (r.searchOnly || typeof r.price !== 'number' || r.price <= 0) return;
+      if (r.searchOnly || r.stalePrice || typeof r.price !== 'number' || r.price <= 0) return;
       if (r.price < bestPrice || (r.price === bestPrice && (r.trustScore || 0) > bestTrust)) {
         bestPrice = r.price;
         bestTrust = r.trustScore || 0;
@@ -1191,7 +1468,7 @@ app.get('/api/search', async (req, res) => {
     });
 
     const finalRetailers = curatedRetailers.map((r, i) => {
-      const priceDiff = (typeof r.price === 'number' && r.price > 0 && bestPrice < Infinity) ? r.price - bestPrice : null;
+      const priceDiff = (typeof r.price === 'number' && r.price > 0 && !r.stalePrice && bestPrice < Infinity) ? r.price - bestPrice : null;
       return {
         ...r,
         isBestDeal: i === bestDealIdx,
@@ -1210,8 +1487,11 @@ app.get('/api/search', async (req, res) => {
       cachedAt: new Date().toISOString(),
     };
 
-    // Save to Supabase (fire-and-forget)
-    setCachedResult(query, responsePayload).catch(() => {});
+    // Cache only when at least one live price is available.
+    // This avoids serving stale "all unavailable" snapshots for an hour.
+    if (hasAnyLivePrice(finalRetailers) && hasSufficientCoverage(query, finalRetailers)) {
+      setCachedResult(query, responsePayload).catch(() => {});
+    }
     savePriceSnapshots(query, finalRetailers).catch(() => {});
 
     res.json(responsePayload);
@@ -1305,6 +1585,49 @@ app.delete('/api/price-alerts/:id', async (req, res) => {
   res.json(result);
 });
 
-app.listen(PORT, () => {
+function shutdown(signal, exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\n[shutdown] Received ${signal}. Closing server...`);
+
+  if (!server) {
+    process.exit(exitCode);
+    return;
+  }
+
+  server.close(() => {
+    console.log('[shutdown] Server closed cleanly.');
+    process.exit(exitCode);
+  });
+
+  setTimeout(() => {
+    console.error('[shutdown] Timed out waiting for connections. Forcing exit.');
+    process.exit(1);
+  }, 8000).unref();
+}
+
+server = app.listen(PORT, () => {
   console.log(`\n🚀 PriceWise API running → http://localhost:${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`[startup] Port ${PORT} is already in use. Stop the other server process and retry.`);
+  } else {
+    console.error('[startup] Server failed to start:', err?.message || err);
+  }
+  process.exit(1);
+});
+
+process.on('SIGINT', () => shutdown('SIGINT', 0));
+process.on('SIGTERM', () => shutdown('SIGTERM', 0));
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[runtime] Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[runtime] Uncaught exception:', error);
+  shutdown('uncaughtException', 1);
 });

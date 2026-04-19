@@ -90,7 +90,7 @@ export async function withRetailerPage(url, callback) {
   });
 
   const page = await context.newPage();
-  page.setDefaultTimeout(9000);
+  page.setDefaultTimeout(6000);
 
   await page.route('**/*', (route) => {
     const type = route.request().resourceType();
@@ -102,7 +102,7 @@ export async function withRetailerPage(url, callback) {
   });
 
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 9000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 6000 });
     return await callback(page);
   } finally {
     await context.close();

@@ -1,5 +1,5 @@
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
-const SEARCH_TIMEOUT_MS = 35000;
+const SEARCH_TIMEOUT_MS = 20000;
 
 function getSearchCacheKey(query) {
   return `pricewise:last-search:${String(query || '').trim().toLowerCase()}`;
@@ -39,7 +39,7 @@ function delay(ms) {
 export async function searchProductsLive(query, { fresh = true } = {}) {
   let lastError;
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= 1; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
 
@@ -72,7 +72,7 @@ export async function searchProductsLive(query, { fresh = true } = {}) {
     } catch (error) {
       clearTimeout(timer);
       lastError = error;
-      if (attempt < 2) await delay(600);
+      if (attempt < 1) await delay(400);
     }
   }
 

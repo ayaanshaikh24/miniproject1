@@ -43,6 +43,18 @@ function normalizeUrlToQuery(value = '') {
     const raw = String(value || '').trim();
     const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
 
+    const likelyIdToken = (token = '') => {
+      const t = String(token || '').toLowerCase();
+      if (!t) return true;
+      if (/^(utm|ref|sr|spm|fbclid|gclid)/.test(t)) return true;
+      if (/^[a-f0-9]{16,}$/i.test(t)) return true;
+      if (/^(itm|pid|ppid|sku|spid)[a-z0-9]+$/i.test(t)) return true;
+      // Keep common model tokens (often 8-16 chars with letters+digits),
+      // but drop very long mixed IDs that are likely tracking data.
+      if (t.length >= 24 && /[a-z]/i.test(t) && /\d/.test(t)) return true;
+      return false;
+    };
+
     const tokenNoise = new Set([
       'www', 'com', 'in', 'co', 'net', 'org', 'product', 'products', 'item', 'items',
       'dp', 'gp', 'p', 'ref', 'utm', 'source', 'medium', 'campaign', 'pid', 'sku',
@@ -58,7 +70,13 @@ function normalizeUrlToQuery(value = '') {
       .trim()
       .toLowerCase();
 
-    const fromParams = Array.from(parsed.searchParams.values()).join(' ');
+    const preferredParamKeys = ['q', 'query', 'search', 'keyword', 'k', 'text', 'title', 'name', 'product'];
+    const prioritizedParams = preferredParamKeys
+      .flatMap((key) => parsed.searchParams.getAll(key))
+      .join(' ')
+      .trim();
+
+    const fromParams = prioritizedParams || Array.from(parsed.searchParams.values()).join(' ');
     const fromPath = decodeURIComponent(parsed.pathname || '')
       .split('/')
       .filter(Boolean)
@@ -71,7 +89,7 @@ function normalizeUrlToQuery(value = '') {
       .filter((token) => {
         if (token.length <= 1) return false;
         if (tokenNoise.has(token)) return false;
-        if (token.length >= 10 && /\d/.test(token) && /[a-z]/.test(token)) return false;
+        if (likelyIdToken(token)) return false;
         return true;
       });
 

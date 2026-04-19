@@ -1040,23 +1040,45 @@ async function getImmersiveStores(immersiveApiUrl, apiKey) {
 
 async function resolveDirectMerchantUrl(target, apiKey) {
   if (!target) return '';
+  const targetSite = String(target.site || '').trim();
+  const targetQuery = String(target.query || target.name || target.store || '').trim();
 
   // Helper: if the URL belongs to a known trusted retailer, trust it directly
   // (don't do a server-side HEAD check — Indian e-commerce sites block these).
   function resolveWithTrust(url) {
     const cleaned = cleanMerchantUrl(url || '');
-    if (!cleaned) return buildRedirectFallbackUrl(target);
+    if (!cleaned) return '';
     if (isKnownTrustedRetailer(target.store, cleaned)) return cleaned;
-    // For unknown stores fall back to Google search
-    return buildRedirectFallbackUrl(target);
+
+    const host = hostFromUrl(cleaned);
+    if (targetSite && host && host.includes(targetSite.replace(/^www\./, ''))) {
+      return cleaned;
+    }
+
+    const productUrlHints = ['/dp/', '/gp/product/', '/p/', '/product/', '/buy/', '/item/', '/products/'];
+    if (productUrlHints.some((hint) => cleaned.includes(hint))) return cleaned;
+
+    return '';
   }
 
   if (target.directUrl && !target.directUrl.includes('google.com/search?ibp=oshop')) {
-    return resolveWithTrust(target.directUrl);
+    const trustedDirect = resolveWithTrust(target.directUrl);
+    if (trustedDirect) return trustedDirect;
+  }
+
+  if (targetSite && targetQuery) {
+    try {
+      const searchedUrl = await searchSiteProductUrl({ site: targetSite, query: targetQuery });
+      const trustedSearchUrl = resolveWithTrust(searchedUrl);
+      if (trustedSearchUrl) return trustedSearchUrl;
+    } catch (error) {
+      console.warn('[redirect] site search fallback failed:', error.message);
+    }
   }
 
   if (!target.immersiveApiUrl) {
-    return resolveWithTrust(target.directUrl || '');
+    const directFallback = resolveWithTrust(target.directUrl || '');
+    if (directFallback) return directFallback;
   }
 
   try {
@@ -1067,8 +1089,15 @@ async function resolveDirectMerchantUrl(target, apiKey) {
     const exactStore = stores.filter((entry) => normalizeStoreName(entry.name) === targetStore);
     const candidates = exactStore.length > 0 ? exactStore : stores.filter((entry) => normalizeStoreName(entry.name).includes(targetStore) || targetStore.includes(normalizeStoreName(entry.name)));
 
-    if (candidates.length === 0) {
-      return resolveWithTrust(target.directUrl || '');
+      if (candidates.length === 0) {
+      const directFallback = resolveWithTrust(target.directUrl || '');
+      if (directFallback) return directFallback;
+      if (targetSite && targetQuery) {
+        const searchedUrl = await searchSiteProductUrl({ site: targetSite, query: targetQuery });
+        const trustedSearchUrl = resolveWithTrust(searchedUrl);
+        if (trustedSearchUrl) return trustedSearchUrl;
+      }
+      return buildRedirectFallbackUrl(target);
     }
 
     const ranked = candidates.sort((a, b) => {
@@ -1080,7 +1109,14 @@ async function resolveDirectMerchantUrl(target, apiKey) {
     return resolveWithTrust(ranked[0]?.link || target.directUrl || '');
   } catch (error) {
     console.warn('[redirect] failed to resolve merchant URL:', error.message);
-    return resolveWithTrust(target.directUrl || '');
+    const directFallback = resolveWithTrust(target.directUrl || '');
+    if (directFallback) return directFallback;
+    if (targetSite && targetQuery) {
+      const searchedUrl = await searchSiteProductUrl({ site: targetSite, query: targetQuery });
+      const trustedSearchUrl = resolveWithTrust(searchedUrl);
+      if (trustedSearchUrl) return trustedSearchUrl;
+    }
+    return buildRedirectFallbackUrl(target);
   }
 }
 
@@ -1289,6 +1325,7 @@ app.get('/api/search', async (req, res) => {
               price,
               directUrl: matchingResult.link || matchingResult.product_link || '',
               immersiveApiUrl: matchingResult.serpapi_immersive_product_api || '',
+              site: targetRetailer.site,
             });
 
             retailers.push(createRetailerEntry({
@@ -1329,6 +1366,7 @@ app.get('/api/search', async (req, res) => {
               price,
               directUrl: domainMatch.link || domainMatch.product_link || '',
               immersiveApiUrl: domainMatch.serpapi_immersive_product_api || '',
+              site: targetRetailer.site,
             });
 
             retailers.push(createRetailerEntry({
@@ -1391,6 +1429,7 @@ app.get('/api/search', async (req, res) => {
         price: priceStr || 0,
         directUrl,
         immersiveApiUrl: item.serpapi_immersive_product_api || '',
+        site: hostFromUrl(directUrl),
       });
 
       retailers.push(createRetailerEntry({

@@ -139,6 +139,42 @@ const VARIANT_WORD_SUFFIXES = [
 // Single-letter model suffixes (e.g. iPhone 17e, iPhone 6s, iPhone 5c).
 const SINGLE_LETTER_SUFFIXES = ['e', 's', 'c', 'r', 'a'];
 
+// Price-language patterns to strip before relevance matching.
+// Important: do NOT remove plain model numbers (e.g. "iphone 17").
+const PRICE_COMPARISON_PATTERN = /\b(?:under|below|above|over|within|upto|up\s*to|less\s*than|more\s*than|around|approx(?:imately)?)\s*(?:rs\.?|inr|₹)?\s*\d[\d,]*(?:\.\d+)?(?:\s*(?:thousand|lakh|k|l))?\b/gi;
+const PRICE_BUDGET_WORD_PATTERN = /\b(?:budget|price\s*range)\b/gi;
+const PRICE_AMOUNT_WITH_UNIT_PATTERN = /\b\d[\d,]*(?:\.\d+)?\s*(?:thousand|lakh|k|l)\b/gi;
+
+/**
+ * Strip price-related language from a query so it can be used for
+ * product-relevance matching.  E.g. "laptops under 30 thousand" → "laptops".
+ */
+export function stripPriceLanguage(query) {
+  return (query || '')
+    .replace(PRICE_COMPARISON_PATTERN, ' ')
+    .replace(PRICE_BUDGET_WORD_PATTERN, ' ')
+    .replace(PRICE_AMOUNT_WITH_UNIT_PATTERN, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Returns true when the query is a generic product-category search
+ * (e.g. "laptop", "washing machine", "water bottle", "bicycle") rather
+ * than a specific model number search (e.g. "iPhone 15", "Samsung S24").
+ *
+ * Heuristic: a query is generic when, after stripping price language,
+ * it contains no digits and its words are all common English / category words.
+ */
+export function isGenericCategoryQuery(query) {
+  const cleaned = stripPriceLanguage(query || '');
+  // If cleaned query still has digits, it's probably a model-number search
+  if (/\d/.test(cleaned)) return false;
+  // If cleaned query is very short it might be a brand with a model implied
+  if (cleaned.trim().length < 3) return false;
+  return true;
+}
+
 /**
  * Check if `text` contains `phrase` as a whole word / phrase (not a substring
  * of another word).  Uses word splitting instead of regex to avoid escaping issues.
@@ -189,6 +225,89 @@ const ACCESSORY_KEYWORDS = [
   'earbuds', 'headphones', 'neckband', 'speaker',
 ];
 
+const PHONE_QUERY_KEYWORDS = [
+  'iphone', 'samsung', 'oneplus', 'pixel', 'realme', 'redmi', 'xiaomi',
+  'oppo', 'vivo', 'nothing', 'motorola', 'moto', 'mobile', 'phone', 'smartphone',
+];
+
+const PHONE_TITLE_SIGNALS = [
+  'iphone', 'galaxy', 'mobile', 'smartphone', '5g', '4g', 'sim', 'dual sim',
+  'android', 'ios', 'phone', 'oneplus', 'pixel', 'redmi', 'realme', 'vivo', 'oppo', 'xiaomi',
+];
+
+const NON_PHONE_CATEGORY_KEYWORDS = [
+  'monitor', 'tv', 'television', 'laptop', 'notebook', 'tablet', 'pad', 'watch',
+  'earbuds', 'headphones', 'speaker', 'router', 'printer', 'camera', 'refrigerator',
+  'washing machine', 'air conditioner', 'microwave', 'keyboard', 'mouse',
+  'full hd', 'qhd', 'uhd', 'amoled monitor', 'ips monitor', 'curved monitor',
+  'inch', 'hz', 'refresh rate',
+];
+
+function isPhoneIntentQuery(queryNorm) {
+  return PHONE_QUERY_KEYWORDS.some((keyword) => queryNorm.includes(keyword));
+}
+
+function looksLikePhoneTitle(titleNorm) {
+  return PHONE_TITLE_SIGNALS.some((keyword) => titleNorm.includes(keyword));
+}
+
+function isStorageNumberToken(token, queryWords) {
+  if (!/^\d{2,4}$/.test(token)) return false;
+  const hasStorageUnit = queryWords.includes('gb') || queryWords.includes('tb') || queryWords.includes('mb');
+  return hasStorageUnit;
+}
+
+const OPTIONAL_SPEC_TOKENS = new Set([
+  'black', 'white', 'blue', 'green', 'red', 'pink', 'purple', 'yellow', 'gold', 'silver', 'grey', 'gray',
+  'space', 'midnight', 'starlight', 'titanium', 'natural', 'desert',
+  'dual', 'sim', 'esim', 'new', 'latest',
+]);
+
+function isOptionalSpecToken(token) {
+  if (!token) return true;
+  if (OPTIONAL_SPEC_TOKENS.has(token)) return true;
+  if (token === 'gb' || token === 'tb' || token === 'mb') return true;
+  // Storage / RAM-like specs are optional when matching the same model.
+  if (/^\d+(?:gb|tb|mb)$/.test(token)) return true;
+  // Common marketing generation/year suffixes.
+  if (/^\d{4}$/.test(token)) return true;
+  return false;
+}
+
+const TOKEN_ALIASES = {
+  samsung: ['galaxy'],
+  galaxy: ['samsung'],
+  iphone: ['apple', 'ios'],
+  oneplus: ['1plus'],
+  xiaomi: ['mi', 'redmi'],
+  mi: ['xiaomi'],
+  motorola: ['moto'],
+  moto: ['motorola'],
+};
+
+function tokenMatchesTitle(token, titleNorm, titleWords) {
+  if (!token) return false;
+
+  if (titleNorm.includes(token)) return true;
+
+  // Handle model tokens like s24, a55, m35, x200 that might be split as "s 24"
+  // or "s-24" after normalization.
+  const modelMatch = token.match(/^([a-z]{1,4})(\d{1,4}[a-z]?)$/i);
+  if (modelMatch) {
+    const letters = modelMatch[1].toLowerCase();
+    const digits = modelMatch[2].toLowerCase();
+    if (titleNorm.includes(`${letters}${digits}`)) return true;
+    if (titleNorm.includes(`${letters} ${digits}`)) return true;
+    // Also allow exact adjacent tokens in title words.
+    for (let i = 0; i < titleWords.length - 1; i += 1) {
+      if (titleWords[i] === letters && titleWords[i + 1] === digits) return true;
+    }
+  }
+
+  const aliases = TOKEN_ALIASES[token] || [];
+  return aliases.some((alias) => titleNorm.includes(alias));
+}
+
 /**
  * Returns true when a scraped product name is relevant to the search query.
  *
@@ -206,17 +325,72 @@ export function isRelevantProduct(productName, query) {
 
   const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const titleNorm = normalize(productName);
-  const queryNorm = normalize(query);
+
+  // Strip price language ("under 30 thousand", "below 500", etc.) before matching
+  const cleanedQuery = stripPriceLanguage(query);
+  const queryNorm = normalize(cleanedQuery || query);
+  const generic = isGenericCategoryQuery(query);
+
+  // ── 0. Query intent disambiguation ──────────────────────────────────────
+  // For phone-intent queries, reject obvious non-phone categories.
+  if (!generic && isPhoneIntentQuery(queryNorm)) {
+    const hasNonPhoneSignal = NON_PHONE_CATEGORY_KEYWORDS.some((keyword) => titleNorm.includes(keyword) && !queryNorm.includes(keyword));
+    if (hasNonPhoneSignal) return false;
+  }
 
   // ── 1. Accessory rejection ───────────────────────────────────────────────
-  for (const keyword of ACCESSORY_KEYWORDS) {
-    if (titleNorm.includes(keyword) && !queryNorm.includes(keyword)) return false;
+  if (!generic) {
+    for (const keyword of ACCESSORY_KEYWORDS) {
+      if (titleNorm.includes(keyword) && !queryNorm.includes(keyword)) return false;
+    }
   }
 
   const queryWords = queryNorm.split(' ').filter(Boolean);
   const titleWords = titleNorm.split(' ').filter(Boolean);
 
   if (queryWords.length === 0) return true;
+
+  // For generic category searches, only do a simple token-presence check.
+  // Skip numeric and variant-suffix rejection — the user is browsing a
+  // category, not looking for an exact model.
+  if (generic) {
+    // Synonym expansion — so "bag" also matches "backpack", etc.
+    const SYNONYMS = {
+      'bag': ['backpack', 'rucksack', 'briefcase', 'satchel', 'tote', 'pack', 'sling'],
+      'backpack': ['bag', 'rucksack', 'pack'],
+      'shoes': ['sneakers', 'footwear', 'trainers', 'joggers', 'shoe'],
+      'shoe': ['sneakers', 'footwear', 'trainers', 'joggers', 'shoes'],
+      'bottle': ['flask', 'sipper', 'tumbler'],
+      'fan': ['cooler', 'blower'],
+      'tv': ['television', 'smart tv', 'led tv'],
+      'ac': ['air conditioner', 'airconditioner'],
+      'fridge': ['refrigerator'],
+      'refrigerator': ['fridge'],
+      'cycle': ['bicycle', 'bike'],
+      'bicycle': ['cycle', 'bike'],
+      'bike': ['bicycle', 'cycle'],
+      'earbuds': ['earphones', 'tws'],
+      'headphones': ['headphone', 'headset'],
+      'watch': ['smartwatch', 'timepiece'],
+      'charger': ['charging', 'adapter'],
+      'mouse': ['mice'],
+    };
+
+    const importantWords = queryWords.filter(w => w.length >= 3);
+    const toMatch = importantWords.length > 0 ? importantWords : queryWords;
+
+    // For each query token, also accept its synonyms in the title
+    const matchCount = toMatch.filter(w => {
+      if (titleNorm.includes(w)) return true;
+      const syns = SYNONYMS[w] || [];
+      return syns.some(syn => titleNorm.includes(syn));
+    }).length;
+
+    // Accept if at least 1 important keyword (or synonym) matches
+    return matchCount >= 1;
+  }
+
+  // ── Model-specific search from here ─────────────────────────────────────
 
   // If query contains model numbers (e.g. "15" in "iphone 15"),
   // they must be present in the title to avoid generic category pages.
@@ -225,13 +399,23 @@ export function isRelevantProduct(productName, query) {
     if (!titleWords.includes(num)) return false;
   }
 
-  // ── 2. Token match (≥70% of query words must appear in title) ────────────
+  // ── 2. Strict core-token match for specific queries ────────────────────────
+  // For model searches, every important core token must be present.
+  // Optional specs (colors/storage/marketing words) are excluded from required set.
+  const coreTokens = queryWords.filter((w) => w.length >= 2 && !isOptionalSpecToken(w) && !isStorageNumberToken(w, queryWords));
+  const requiredTokens = coreTokens.length > 0 ? coreTokens : queryWords.filter((w) => w.length >= 2);
+  if (requiredTokens.length > 0) {
+    const missingCore = requiredTokens.some((w) => !tokenMatchesTitle(w, titleNorm, titleWords));
+    if (missingCore) return false;
+  }
+
+  // ── 3. Fallback token match (legacy safety) ───────────────────────────────
   const importantWords = queryWords.filter(w => w.length >= 3);
   const toMatch = importantWords.length > 0 ? importantWords : queryWords;
   const matchCount = toMatch.filter(w => titleNorm.includes(w)).length;
   if (matchCount < Math.max(1, Math.ceil(toMatch.length * 0.7))) return false;
 
-  // ── 3. Numeric-token exact variant rejection ─────────────────────────────
+  // ── 4. Numeric-token exact variant rejection ─────────────────────────────
   // For each number in the query (e.g. "17"), find the corresponding token in
   // the title. If the title token is not exactly the query number (e.g. it's
   // "17e", "17pro", "17plus" even split across words), it's a variant → reject.
@@ -253,7 +437,7 @@ export function isRelevantProduct(productName, query) {
     }
   }
 
-  // ── 4. Known variant suffix word rejection ───────────────────────────────
+  // ── 5. Known variant suffix word rejection ───────────────────────────────
   for (const suffix of VARIANT_WORD_SUFFIXES) {
     const suffixWords = suffix.split(' ');
     // Check if ALL words of the suffix appear consecutively in titleWords

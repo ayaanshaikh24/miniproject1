@@ -9,7 +9,7 @@ import { scrapeRelianceDigital } from './services/scrapers/relianceDigital.js';
 import { scrapeJioMart } from './services/scrapers/jiomart.js';
 import { scrapeVijaySales } from './services/scrapers/vijaySales.js';
 import { scrapeTataCliq } from './services/scrapers/tataCliq.js';
-import { isRelevantProduct } from './services/scrapers/helpers.js';
+import { isRelevantProduct, isGenericCategoryQuery, stripPriceLanguage } from './services/scrapers/helpers.js';
 import { searchSiteProductUrl } from './services/scrapers/siteSearch.js';
 import { withRetailerPage } from './services/scrapers/browser.js';
 import { getCachedResult, setCachedResult } from './services/cache.js';
@@ -30,6 +30,56 @@ function hasAnyLivePrice(retailers = []) {
     const price = Number(retailer?.price) || 0;
     return !retailer?.searchOnly && price > 0;
   });
+}
+
+function looksLikeUrlInput(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  return /^https?:\/\//i.test(text) || /^[\w.-]+\.[a-z]{2,}(?:\/\S*)?$/i.test(text);
+}
+
+function normalizeUrlToQuery(value = '') {
+  try {
+    const raw = String(value || '').trim();
+    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+
+    const tokenNoise = new Set([
+      'www', 'com', 'in', 'co', 'net', 'org', 'product', 'products', 'item', 'items',
+      'dp', 'gp', 'p', 'ref', 'utm', 'source', 'medium', 'campaign', 'pid', 'sku',
+      'amazon', 'flipkart', 'myntra', 'meesho', 'snapdeal', 'tatacliq', 'jiomart',
+      'croma', 'reliancedigital', 'vijaysales', 'nykaa', 'ajio',
+    ]);
+
+    const cleanText = (text) => String(text || '')
+      .replace(/\.[a-z]{2,4}$/i, ' ')
+      .replace(/[-_+/]+/g, ' ')
+      .replace(/[^a-z0-9 ]+/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+    const fromParams = Array.from(parsed.searchParams.values()).join(' ');
+    const fromPath = decodeURIComponent(parsed.pathname || '')
+      .split('/')
+      .filter(Boolean)
+      .join(' ');
+
+    const combined = cleanText(`${fromParams} ${fromPath}`);
+    const tokens = combined
+      .split(' ')
+      .filter(Boolean)
+      .filter((token) => {
+        if (token.length <= 1) return false;
+        if (tokenNoise.has(token)) return false;
+        if (token.length >= 10 && /\d/.test(token) && /[a-z]/.test(token)) return false;
+        return true;
+      });
+
+    if (tokens.length === 0) return '';
+    return tokens.slice(0, 8).join(' ');
+  } catch {
+    return '';
+  }
 }
 
 app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:4173'] }));
@@ -400,6 +450,7 @@ const CORE_RETAILER_TARGETS = [
 const MAIN_SERPAPI_TIMEOUT_MS = 15000;
 const SCRAPER_TIMEOUT_MS = 12000;
 const RECOVERY_TIMEOUT_MS = 12000;
+const MIN_VISIBLE_RETAILERS = 8;
 
 const OFFICIAL_SITE_RECOVERY_RETAILERS = new Set([
   'amazon',
@@ -429,7 +480,8 @@ async function fetchJsonWithTimeout(url, timeoutMs) {
   }
 }
 
-async function fetchOfficialSerpapiFallback({ query, target, apiKey }) {
+async function fetchOfficialSerpapiFallback({ query, cleanedQuery, target, apiKey }) {
+  const relevanceQuery = cleanedQuery || query;
   try {
     const hintQuery = `${query} ${target.retailerHint || target.retailer}`.trim();
     const url = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(hintQuery)}&api_key=${apiKey}&gl=in&hl=en`;
@@ -451,9 +503,9 @@ async function fetchOfficialSerpapiFallback({ query, target, apiKey }) {
       const title = item.title || query;
       return (hasMatchingStore || linkMatchesTarget)
         && hasPrice
-        && isRelevantProduct(title, query)
+        && isRelevantProduct(title, relevanceQuery)
         && !isLowQualityListing(title)
-        && !isLikelyAccessoryListing(title, query, extractedPrice);
+        && !isLikelyAccessoryListing(title, relevanceQuery, extractedPrice);
     });
 
     if (!picked) return null;
@@ -483,9 +535,9 @@ async function fetchOfficialSerpapiFallback({ query, target, apiKey }) {
   }
 }
 
-function extractOrganicPrice(result) {
+function extractOrganicPrice(result, minP = 10) {
   const richPrice = Number(result?.rich_snippet?.top?.detected_extensions?.price) || 0;
-  if (richPrice >= 500) return richPrice;
+  if (richPrice >= minP) return richPrice;
 
   const textCandidates = [
     result?.snippet,
@@ -497,13 +549,14 @@ function extractOrganicPrice(result) {
     const match = String(text).match(/(?:₹|Rs\.?|INR)\s?([0-9,]+(?:\.\d+)?)/i);
     if (!match) continue;
     const parsed = Number.parseFloat(match[1].replace(/,/g, '')) || 0;
-    if (parsed >= 500) return parsed;
+    if (parsed >= minP) return parsed;
   }
 
   return 0;
 }
 
-async function fetchOfficialOrganicFallback({ query, target, apiKey }) {
+async function fetchOfficialOrganicFallback({ query, cleanedQuery, target, apiKey }) {
+  const relevanceQuery = cleanedQuery || query;
   try {
     const organicQuery = `site:${target.site} ${query}`;
     const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(organicQuery)}&api_key=${apiKey}&gl=in&hl=en`;
@@ -516,9 +569,9 @@ async function fetchOfficialOrganicFallback({ query, target, apiKey }) {
       const extractedPrice = extractOrganicPrice(item);
       return link.includes(target.site)
         && extractedPrice > 0
-        && isRelevantProduct(title, query)
+        && isRelevantProduct(title, relevanceQuery)
         && !isLowQualityListing(title)
-        && !isLikelyAccessoryListing(title, query, extractedPrice);
+        && !isLikelyAccessoryListing(title, relevanceQuery, extractedPrice);
     });
 
     if (!picked) return null;
@@ -747,7 +800,21 @@ const ACCESSORY_LISTING_PATTERN = /(case|cover|back\s*cover|bumper|screen\s*guar
 
 function isPhoneLikeQuery(query = '') {
   const q = String(query || '').toLowerCase();
+  if (/\bi\s*phone\b/i.test(q)) return true;
   return PHONE_QUERY_KEYWORDS.some((keyword) => q.includes(keyword));
+}
+
+function isAccessoryFocusedQuery(query = '') {
+  return ACCESSORY_LISTING_PATTERN.test(String(query || ''));
+}
+
+/** Minimum price we accept from SerpAPI / scrapers for this query type. */
+function minAcceptablePrice(query = '') {
+  if (isAccessoryFocusedQuery(query)) return 50;
+  if (isPhoneLikeQuery(query)) return 5000;
+  // For general category searches (water bottle, bicycle, etc.) allow very low prices
+  if (isGenericCategoryQuery(query)) return 10;
+  return 200;
 }
 
 function hasSufficientCoverage(query = '', retailers = []) {
@@ -756,10 +823,14 @@ function hasSufficientCoverage(query = '', retailers = []) {
     : 0;
 
   if (isPhoneLikeQuery(query)) return liveCount >= 2;
+  // Generic category searches just need at least 1 live result
+  if (isGenericCategoryQuery(query)) return liveCount >= 1;
   return liveCount >= 1;
 }
 
 function isLikelyAccessoryListing(name = '', query = '', price = 0) {
+  if (isGenericCategoryQuery(query)) return false;
+
   const normalizedName = String(name || '');
   const normalizedQuery = String(query || '');
 
@@ -1001,15 +1072,37 @@ function normalizeScraperResult(result) {
 
 // ─── /api/search?q=iphone+13 ───────────────────────────────
 app.get('/api/search', async (req, res) => {
-  const query = (req.query.q || '').trim();
+  const rawQuery = (req.query.q || '').trim();
+  const query = looksLikeUrlInput(rawQuery) ? (normalizeUrlToQuery(rawQuery) || rawQuery) : rawQuery;
   if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
+
+  // Compute relevance inputs upfront so cached payloads can be validated too.
+  const queryForRelevance = stripPriceLanguage(query) || query;
+  const isGeneric = isGenericCategoryQuery(query);
+  const minPrice = minAcceptablePrice(query);
 
   // Allow ?fresh=1 to bypass cache
   const bypassCache = req.query.fresh === '1';
 
   const cachedPayload = bypassCache ? null : await getCachedResult(query);
   if (cachedPayload && hasAnyLivePrice(cachedPayload.retailers)) {
-    return res.json(cachedPayload);
+    const hasInvalidLiveRetailer = (cachedPayload.retailers || []).some((retailer) => {
+      const live = !retailer?.searchOnly && Number(retailer?.price) > 0;
+      if (!live) return false;
+
+      const price = Number(retailer.price) || 0;
+      const name = String(retailer.name || retailer.productName || query);
+      if (price < minPrice) return true;
+      if (isLikelyAccessoryListing(name, queryForRelevance, price)) return true;
+      if (!isRelevantProduct(name, queryForRelevance)) return true;
+      return false;
+    });
+
+    if (!hasInvalidLiveRetailer) {
+      return res.json(cachedPayload);
+    }
+
+    console.log(`[cache] bypassing stale/invalid cached payload for "${query}"`);
   }
 
 
@@ -1020,13 +1113,15 @@ app.get('/api/search', async (req, res) => {
 
   console.log(`[search] "${query}" — fetching SerpAPI + scrapers in parallel...`);
 
+  console.log(`[search] generic=${isGeneric}, cleanedQuery="${queryForRelevance}", minPrice=${minPrice}`);
+
   // Pre-start SerpAPI recovery for ALL official retailer targets immediately.
   // These run in the background while scrapers also run, so if scrapers fail
   // (due to anti-bot/CAPTCHA), SerpAPI results are already available.
   const prestartRecoveryPromise = Promise.allSettled(
     OFFICIAL_RECOVERY_TARGETS.map((target) =>
       withTimeout(
-        () => fetchOfficialSerpapiFallback({ query, target, apiKey: API_KEY }),
+        () => fetchOfficialSerpapiFallback({ query, cleanedQuery: queryForRelevance, target, apiKey: API_KEY }),
         RECOVERY_TIMEOUT_MS,
         null,
       )
@@ -1038,7 +1133,7 @@ app.get('/api/search', async (req, res) => {
   const prestartOrganicRecoveryPromise = Promise.allSettled(
     OFFICIAL_RECOVERY_TARGETS.map((target) =>
       withTimeout(
-        () => fetchOfficialOrganicFallback({ query, target, apiKey: API_KEY }),
+        () => fetchOfficialOrganicFallback({ query, cleanedQuery: queryForRelevance, target, apiKey: API_KEY }),
         RECOVERY_TIMEOUT_MS,
         null,
       )
@@ -1091,11 +1186,24 @@ app.get('/api/search', async (req, res) => {
       const [scraperName] = scraperTasks[index];
       if (result.status === 'fulfilled' && result.value) {
         const normalized = normalizeScraperResult(result.value);
-        if (normalized && !isLowQualityListing(normalized.name) && isRelevantProduct(normalized.name, query)) {
+        const normalizedPrice = Number(normalized?.price) || 0;
+        const hasLivePrice = !normalized?.searchOnly && normalizedPrice > 0;
+        const failsPriceFloor = hasLivePrice && normalizedPrice < minPrice;
+        const failsAccessoryFilter = hasLivePrice && isLikelyAccessoryListing(normalized?.name, queryForRelevance, normalizedPrice);
+
+        if (normalized
+          && !isLowQualityListing(normalized.name)
+          && isRelevantProduct(normalized.name, queryForRelevance)
+          && !failsPriceFloor
+          && !failsAccessoryFilter) {
           console.log(`[${scraperName.toLowerCase()}] ✓ ${normalized.name} — ₹${normalized.price}`);
           retailers.push(normalized);
         } else {
-          const reason = !normalized ? 'normalization failed' : isLowQualityListing(normalized.name) ? 'low quality' : 'not relevant';
+          let reason = 'not relevant';
+          if (!normalized) reason = 'normalization failed';
+          else if (isLowQualityListing(normalized.name)) reason = 'low quality';
+          else if (failsPriceFloor) reason = `price below minimum threshold (${minPrice})`;
+          else if (failsAccessoryFilter) reason = 'accessory or mismatched listing';
           console.warn(`[${scraperName.toLowerCase()}] ✗ filtered out: ${reason}`);
         }
       } else if (result.status === 'rejected') {
@@ -1129,12 +1237,12 @@ app.get('/api/search', async (req, res) => {
           const storeMatch = src === target || src.includes(target) || target.includes(src) || link.includes(targetRetailer.site);
           if (!storeMatch) return false;
           const title = item.title || '';
-          return isRelevantProduct(title, query) && !isLowQualityListing(title);
+          return isRelevantProduct(title, queryForRelevance) && !isLowQualityListing(title);
         });
 
         if (matchingResult) {
           const price = matchingResult.extracted_price || parseFloat(String(matchingResult.price || '').replace(/[^0-9.]/g, ''));
-          if (price && price >= 500 && !isLikelyAccessoryListing(matchingResult.title || query, query, price)) {
+          if (price && price >= minPrice && !isLikelyAccessoryListing(matchingResult.title || query, queryForRelevance, price)) {
             const redirectUrl = rememberRedirectTarget({
               store: matchingResult.source || targetRetailer.retailer,
               name: matchingResult.title || query,
@@ -1166,10 +1274,10 @@ app.get('/api/search', async (req, res) => {
           const title = item.title || '';
           const price = Number(item.extracted_price) || parseFloat(String(item.price || '').replace(/[^0-9.]/g, '')) || 0;
           return link.includes(targetRetailer.site)
-            && price >= 500
-            && isRelevantProduct(title, query)
+            && price >= minPrice
+            && isRelevantProduct(title, queryForRelevance)
             && !isLowQualityListing(title)
-            && !isLikelyAccessoryListing(title, query, price);
+            && !isLikelyAccessoryListing(title, queryForRelevance, price);
         });
 
         if (domainMatch) {
@@ -1224,14 +1332,16 @@ app.get('/api/search', async (req, res) => {
       const store = item.source || fallbackStore;
       const name = item.title || query;
       const directUrl = item.link || item.product_link || '';
+      const price = Number(priceStr) || 0;
 
       // Block: no price, blocked seller, fake listing title, or irrelevant product
       // Note: we allow any non-blocked retailer through – trust scoring handles ranking
       if (!priceStr
+        || price < minPrice
         || isBlockedRetailer(store)
         || isLowQualityListing(name)
-        || !isRelevantProduct(name, query)
-        || isLikelyAccessoryListing(name, query, priceStr)) {
+        || !isRelevantProduct(name, queryForRelevance)
+        || isLikelyAccessoryListing(name, queryForRelevance, priceStr)) {
         return;
       }
 
@@ -1332,7 +1442,15 @@ app.get('/api/search', async (req, res) => {
 
       if (result.status === 'fulfilled' && result.value) {
         const recovered = result.value;
-        if (!isBlockedRetailer(recovered.store) && !isLowQualityListing(recovered.name) && isRelevantProduct(recovered.name, query)) {
+        const recoveredPrice = Number(recovered.price) || 0;
+        const hasLivePrice = !recovered.searchOnly && recoveredPrice > 0;
+        const passesPriceFloor = !hasLivePrice || recoveredPrice >= minPrice;
+        const passesAccessoryFilter = !hasLivePrice || !isLikelyAccessoryListing(recovered.name, queryForRelevance, recoveredPrice);
+        if (!isBlockedRetailer(recovered.store)
+          && !isLowQualityListing(recovered.name)
+          && isRelevantProduct(recovered.name, queryForRelevance)
+          && passesPriceFloor
+          && passesAccessoryFilter) {
           curatedRetailers.push(recovered);
           seenStores.add(targetNorm);
           added = true;
@@ -1344,7 +1462,15 @@ app.get('/api/search', async (req, res) => {
         const organicResult = preOrganicRecoveryResults[i];
         if (organicResult?.status === 'fulfilled' && organicResult.value) {
           const recovered = organicResult.value;
-          if (!isBlockedRetailer(recovered.store) && !isLowQualityListing(recovered.name) && isRelevantProduct(recovered.name, query)) {
+          const recoveredPrice = Number(recovered.price) || 0;
+          const hasLivePrice = !recovered.searchOnly && recoveredPrice > 0;
+          const passesPriceFloor = !hasLivePrice || recoveredPrice >= minPrice;
+          const passesAccessoryFilter = !hasLivePrice || !isLikelyAccessoryListing(recovered.name, queryForRelevance, recoveredPrice);
+          if (!isBlockedRetailer(recovered.store)
+            && !isLowQualityListing(recovered.name)
+            && isRelevantProduct(recovered.name, queryForRelevance)
+            && passesPriceFloor
+            && passesAccessoryFilter) {
             curatedRetailers.push(recovered);
             seenStores.add(targetNorm);
             added = true;
@@ -1361,8 +1487,9 @@ app.get('/api/search', async (req, res) => {
             normalizedSiteRecovery
             && !isBlockedRetailer(normalizedSiteRecovery.store)
             && !isLowQualityListing(normalizedSiteRecovery.name)
-            && !isLikelyAccessoryListing(normalizedSiteRecovery.name, query, normalizedSiteRecovery.price)
-            && isRelevantProduct(normalizedSiteRecovery.name, query)
+            && !isLikelyAccessoryListing(normalizedSiteRecovery.name, queryForRelevance, normalizedSiteRecovery.price)
+            && isRelevantProduct(normalizedSiteRecovery.name, queryForRelevance)
+            && (normalizedSiteRecovery.searchOnly || Number(normalizedSiteRecovery.price) >= minPrice)
           ) {
             curatedRetailers.push(normalizedSiteRecovery);
             seenStores.add(targetNorm);
@@ -1431,6 +1558,9 @@ app.get('/api/search', async (req, res) => {
     curatedRetailers = dedupeRetailers(curatedRetailers)
       .filter((retailer) => {
         if (retailer.searchOnly || Number(retailer.price) <= 0 || retailer.trustScore < 30) return false;
+        if (Number(retailer.price) < minPrice) return false;
+        if (isLikelyAccessoryListing(retailer.name, queryForRelevance, retailer.price)) return false;
+        if (!isRelevantProduct(retailer.name, queryForRelevance)) return false;
 
         if (isPhoneLikeQuery(query)) {
           const trustedForPhones = retailer.isOfficialStore
@@ -1439,6 +1569,8 @@ app.get('/api/search', async (req, res) => {
           if (!trustedForPhones) return false;
         }
 
+        // For generic category searches accept all trust-scored retailers
+        // (no phone-like trust gate; broader product sources are fine)
         return true;
       })
       .sort((a, b) => {
@@ -1451,7 +1583,25 @@ app.get('/api/search', async (req, res) => {
     console.log(`[search] Stores: ${[...new Set(curatedRetailers.map(r => r.store))].join(', ')}`);
 
     if (curatedRetailers.length === 0) {
-      return res.json({ retailers: [], reviews: [], unavailableOfficialRetailers });
+      const placeholderRetailers = CORE_RETAILER_TARGETS
+        .slice(0, MIN_VISIBLE_RETAILERS)
+        .map((target) => createUnavailableRetailerEntry({
+          retailer: target.retailer,
+          searchUrl: target.searchUrl,
+          query,
+          trust: target.trust,
+          reason: 'No reliable live price found right now',
+        }));
+
+      return res.json({
+        retailers: placeholderRetailers,
+        reviews: [],
+        unavailableOfficialRetailers,
+        query,
+        name: query,
+        bestDealPrice: null,
+        cachedAt: new Date().toISOString(),
+      });
     }
 
     // ── Best Deal: exactly ONE winner (lowest price, tiebreak by trust) ──
@@ -1467,7 +1617,7 @@ app.get('/api/search', async (req, res) => {
       }
     });
 
-    const finalRetailers = curatedRetailers.map((r, i) => {
+    let finalRetailers = curatedRetailers.map((r, i) => {
       const priceDiff = (typeof r.price === 'number' && r.price > 0 && !r.stalePrice && bestPrice < Infinity) ? r.price - bestPrice : null;
       return {
         ...r,
@@ -1477,6 +1627,22 @@ app.get('/api/search', async (req, res) => {
         savingsText: i === bestDealIdx && bestPrice < Infinity ? `Cheapest option` : null,
       };
     });
+
+    if (finalRetailers.length < MIN_VISIBLE_RETAILERS) {
+      const existingStores = new Set(finalRetailers.map((retailer) => normalizeStoreName(retailer.store)));
+      const backfillPlaceholders = CORE_RETAILER_TARGETS
+        .filter((target) => !existingStores.has(normalizeStoreName(target.retailer)))
+        .map((target) => createUnavailableRetailerEntry({
+          retailer: target.retailer,
+          searchUrl: target.searchUrl,
+          query,
+          trust: target.trust,
+          reason: 'No reliable live price found right now',
+        }))
+        .slice(0, Math.max(0, MIN_VISIBLE_RETAILERS - finalRetailers.length));
+
+      finalRetailers = [...finalRetailers, ...backfillPlaceholders];
+    }
 
     const responsePayload = {
       retailers: finalRetailers,

@@ -34,9 +34,9 @@ function delay(ms) {
 
 /**
  * Search for a product across all retailers via the backend scrapers.
- * Pass fresh=true to bypass the server-side cache.
+ * By default we request fresh results to avoid stale mismatched cache entries.
  */
-export async function searchProductsLive(query, { fresh = false } = {}) {
+export async function searchProductsLive(query, { fresh = true } = {}) {
   let lastError;
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {

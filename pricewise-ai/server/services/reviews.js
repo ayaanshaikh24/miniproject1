@@ -102,8 +102,8 @@ function computeGenuineScore(review) {
 // ── Strategy 1: Google Shopping → product_id → Google Product reviews ──
 async function fetchGoogleProductReviews(query, apiKey) {
   try {
-    // Step 1: Find product_id
-    const shopUrl = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&api_key=${apiKey}&gl=in&hl=en&num=5`;
+    // Step 1: Find product_id — prefer the product with the most reviews
+    const shopUrl = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&api_key=${apiKey}&gl=in&hl=en&num=10`;
     const shopData = await fetchWithTimeout(shopUrl, 10000);
 
     const shopResults = [
@@ -111,20 +111,20 @@ async function fetchGoogleProductReviews(query, apiKey) {
       ...(Array.isArray(shopData.inline_shopping_results) ? shopData.inline_shopping_results : []),
     ];
 
-    let productId = null;
-    for (const item of shopResults) {
-      if (item.product_id) {
-        productId = item.product_id;
-        break;
-      }
-    }
+    // Sort by review count descending — pick the most-reviewed product
+    const withId = shopResults.filter(item => item.product_id);
+    withId.sort((a, b) => (Number(b.reviews) || 0) - (Number(a.reviews) || 0));
+    const bestProduct = withId[0] || null;
+    const productId = bestProduct?.product_id || null;
+    // Save the best product title for downstream use (e.g. Amazon review lookup)
+    const bestProductTitle = bestProduct?.title || null;
 
     if (!productId) {
       console.log('[reviews] No product_id found in Google Shopping results');
-      return { reviews: [], ratingInfo: null, shopResults };
+      return { reviews: [], ratingInfo: null, shopResults, bestProductTitle };
     }
 
-    console.log(`[reviews] Found product_id: ${productId}`);
+    console.log(`[reviews] Found product_id: ${productId} ("${bestProductTitle}")`);
 
     // Step 2: Fetch reviews
     const reviewUrl = `https://serpapi.com/search.json?engine=google_product&product_id=${encodeURIComponent(productId)}&api_key=${apiKey}&gl=in&hl=en`;
@@ -163,10 +163,10 @@ async function fetchGoogleProductReviews(query, apiKey) {
       reviewsDistribution: productData?.reviews_results?.ratings || [],
     };
 
-    return { reviews, ratingInfo, shopResults };
+    return { reviews, ratingInfo, shopResults, bestProductTitle };
   } catch (err) {
     console.warn('[reviews] Google Product reviews failed:', err.message);
-    return { reviews: [], ratingInfo: null, shopResults: [] };
+    return { reviews: [], ratingInfo: null, shopResults: [], bestProductTitle: null };
   }
 }
 
@@ -428,34 +428,37 @@ export async function fetchProductReviews(query, apiKey) {
     let ratingInfo = null;
 
     // Strategy 1 + 2: Fetch Google Product reviews and Amazon reviews in parallel
-    const [googleResult, amazonReviews] = await Promise.allSettled([
-      fetchGoogleProductReviews(query, apiKey),
-      fetchAmazonReviews(query, apiKey),
-    ]);
+    // For Amazon, we'll use the best product title if available (resolved after Google call)
+    const googleResult = await fetchGoogleProductReviews(query, apiKey).catch(() => ({
+      reviews: [], ratingInfo: null, shopResults: [], bestProductTitle: null,
+    }));
 
-    // Process Google results
-    if (googleResult.status === 'fulfilled' && googleResult.value) {
-      const { reviews, ratingInfo: gRating, shopResults } = googleResult.value;
-      allReviews.push(...reviews);
-      ratingInfo = gRating;
+    const { reviews: googleReviews, ratingInfo: gRating, shopResults, bestProductTitle } = googleResult;
+    allReviews.push(...googleReviews);
+    ratingInfo = gRating;
 
-      // Strategy 3: If Google Product reviews are empty, extract from shopping results
-      if (reviews.length === 0 && shopResults?.length > 0) {
-        console.log('[reviews] No Google Product reviews, extracting shopping snippets...');
-        const shoppingSnippets = extractShoppingReviewSnippets(shopResults);
+    // Strategy 3: Always extract shopping review snippets (rich data for generic searches)
+    if (shopResults?.length > 0) {
+      const shoppingSnippets = extractShoppingReviewSnippets(shopResults);
+      if (shoppingSnippets.length > 0) {
+        console.log(`[reviews] Extracted ${shoppingSnippets.length} shopping review snippets`);
         allReviews.push(...shoppingSnippets);
       }
     }
 
-    // Process Amazon results
-    if (amazonReviews.status === 'fulfilled' && Array.isArray(amazonReviews.value) && amazonReviews.value.length > 0) {
-      allReviews.push(...amazonReviews.value);
-      console.log(`[reviews] Added ${amazonReviews.value.length} Amazon reviews`);
-    }
+    // Strategy 2: Amazon reviews — use specific product title for better matches
+    const amazonQuery = bestProductTitle || query;
+    try {
+      const amazonReviews = await fetchAmazonReviews(amazonQuery, apiKey);
+      if (Array.isArray(amazonReviews) && amazonReviews.length > 0) {
+        allReviews.push(...amazonReviews);
+        console.log(`[reviews] Added ${amazonReviews.length} Amazon reviews`);
+      }
+    } catch {}
 
-    // Strategy 4: If still no reviews, try Google search snippets
-    if (allReviews.length === 0) {
-      console.log('[reviews] No reviews from primary sources, trying Google search snippets...');
+    // Strategy 4: If still thin, try Google search snippets for review articles
+    if (allReviews.length < 3) {
+      console.log('[reviews] Thin results, trying Google search snippets...');
       const searchSnippets = await fetchGoogleReviewSnippets(query, apiKey);
       allReviews.push(...searchSnippets);
     }
@@ -464,7 +467,7 @@ export async function fetchProductReviews(query, apiKey) {
     // Also enriches thin payloads where APIs return very few reviews.
     if (allReviews.length < 4) {
       console.log('[reviews] Using retailer page fallback for additional live reviews...');
-      const retailerFallbackReviews = await fetchRetailerPageReviewFallback(query);
+      const retailerFallbackReviews = await fetchRetailerPageReviewFallback(bestProductTitle || query);
       allReviews.push(...retailerFallbackReviews);
     }
 

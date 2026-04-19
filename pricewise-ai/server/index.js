@@ -78,11 +78,32 @@ function normalizeUrlToQuery(value = '') {
     if (tokens.length === 0) return '';
     return tokens.slice(0, 8).join(' ');
   } catch {
-    return '';
+      return '';
+    }
   }
-}
 
-app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:4173'] }));
+  const corsOrigins = new Set([
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175',
+    'http://localhost:4173',
+    process.env.FRONTEND_ORIGIN,
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '',
+    ...(String(process.env.ADDITIONAL_CORS_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean)),
+  ].filter(Boolean));
+
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (corsOrigins.has(origin) || /^https:\/\/.*\.vercel\.app$/i.test(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
+  }));
 app.use(express.json());
 
 const HIGH_TRUST_RETAILERS = new Set([

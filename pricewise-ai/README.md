@@ -55,3 +55,10 @@ npm run smoke
 - Unavailable retailer cards are intentionally removed from the main result list.
 - Retailers without live prices remain visible in the unavailable retailer section.
 - Retailer logos use local vector rendering to avoid blurred/remote-host failures.
+
+## Free Deployment Plan
+
+- Frontend: deploy the `client/` folder on Vercel.
+- Backend: deploy the `server/` folder on Render free tier.
+- In Vercel, set `VITE_API_BASE_URL` to your Render backend URL.
+- In Render, set `SERPAPI_API_KEY` and optionally `FRONTEND_ORIGIN` to your Vercel URL.

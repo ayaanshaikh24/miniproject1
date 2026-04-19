@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { ExternalLink, Star, Award, Package, Truck, ShieldCheck, Tag } from 'lucide-react';
 import { motion } from 'framer-motion';
 import TrustScore from '../pricing/TrustScore';
+import { API_BASE } from '../../../services/api';
 
 const PRODUCT_FALLBACK_IMAGE = '/product-placeholder.svg';
 
@@ -48,6 +49,15 @@ function buildInlineImageFallback(label) {
   const safeLabel = String(label || 'Product').slice(0, 28);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#111827"/><stop offset="100%" stop-color="#1f2937"/></linearGradient></defs><rect width="240" height="240" rx="24" fill="url(#g)"/><rect x="56" y="48" width="128" height="144" rx="14" fill="#0b1220" stroke="#334155"/><text x="120" y="214" text-anchor="middle" fill="#e5e7eb" font-family="Arial, sans-serif" font-size="15" font-weight="700">${safeLabel}</text></svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+function resolveBackendUrl(path = '') {
+  const value = String(path || '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith('/api/')) return `${API_BASE}${value.slice(4)}`;
+  if (value.startsWith('/')) return `${API_BASE}${value}`;
+  return `${API_BASE}/${value}`;
 }
 
 function getStockColor(status) {
@@ -110,7 +120,8 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
     if (rawUrl.startsWith('/api/redirect/')) {
       setLoadingUrl(true);
       try {
-        const res = await fetch(rawUrl);
+        const resolvedRedirectUrl = resolveBackendUrl(rawUrl);
+        const res = await fetch(resolvedRedirectUrl);
         const data = await res.json();
         window.open(data?.url || fallbackUrl, '_blank', 'noopener,noreferrer');
       } catch {

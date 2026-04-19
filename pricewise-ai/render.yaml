@@ -2,7 +2,7 @@ services:
   - type: web
     name: pricewise-ai-api
     env: node
-    rootDir: server
+    rootDir: pricewise-ai/server
     buildCommand: npm install
     startCommand: npm run start
     plan: free

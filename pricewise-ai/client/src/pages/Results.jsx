@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { AlertCircle, WifiOff, Loader2, Bell, Clock, RefreshCw, ExternalLink } from 'lucide-react';
 
@@ -43,6 +43,8 @@ const Results = () => {
   const [data, setData] = useState(null);
   const [priceHistory, setPriceHistory] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [slowSearch, setSlowSearch] = useState(false);
+  const slowSearchTimerRef = useRef(null);
 
   // Filter/Sort state
   const [sortBy, setSortBy] = useState('price-asc');
@@ -54,10 +56,16 @@ const Results = () => {
 
   const doSearch = (fresh = false) => {
     if (!query) { setLoading(false); return; }
+    if (slowSearchTimerRef.current) clearTimeout(slowSearchTimerRef.current);
     setLoading(true);
     setApiError(false);
     setData(null);
     setPriceHistory([]);
+    setSlowSearch(false);
+
+    slowSearchTimerRef.current = setTimeout(() => {
+      setSlowSearch(true);
+    }, 3000);
 
     searchProductsLive(query, { fresh })
       .then(resData => {
@@ -69,7 +77,15 @@ const Results = () => {
         console.error('[Results] Search error:', err);
         setApiError(true);
       })
-      .finally(() => { setLoading(false); setIsRefreshing(false); });
+      .finally(() => {
+        if (slowSearchTimerRef.current) {
+          clearTimeout(slowSearchTimerRef.current);
+          slowSearchTimerRef.current = null;
+        }
+        setSlowSearch(false);
+        setLoading(false);
+        setIsRefreshing(false);
+      });
 
     fetchPriceHistory(query)
       .then(h => {
@@ -84,9 +100,13 @@ const Results = () => {
   };
 
   useEffect(() => {
-    let cancelled = false;
     doSearch(false);
-    return () => { cancelled = true; };
+    return () => {
+      if (slowSearchTimerRef.current) {
+        clearTimeout(slowSearchTimerRef.current);
+        slowSearchTimerRef.current = null;
+      }
+    };
   }, [query]);
 
   const handleRefresh = () => {
@@ -104,6 +124,15 @@ const Results = () => {
               <div className="h-4 bg-neutral-800 rounded-lg w-32 mt-3 animate-pulse" />
             </div>
           </div>
+          {slowSearch && (
+            <div className="rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-4 py-3 flex items-center gap-3 text-cyan-100">
+              <Loader2 size={16} className="animate-spin" />
+              <div>
+                <p className="text-sm font-bold">Still searching for the best matches...</p>
+                <p className="text-xs text-cyan-100/75">Some stores take longer to respond. Showing results as soon as they are ready.</p>
+              </div>
+            </div>
+          )}
           <div className="space-y-4">
             {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
           </div>

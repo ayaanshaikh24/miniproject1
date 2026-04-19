@@ -275,10 +275,13 @@ const ProductReviews = ({ query }) => {
     fetchProductReviews(query)
       .then(data => {
         if (cancelled) return;
-        setReviews(data.reviews || []);
-        setStats(data.stats || null);
-        setSource(data.source || '');
-        setFetchedAt(data.fetchedAt || '');
+        // Ensure safe data access
+        const reviewsArray = Array.isArray(data?.reviews) ? data.reviews : [];
+        const statsData = data?.stats && typeof data.stats === 'object' ? data.stats : null;
+        setReviews(reviewsArray);
+        setStats(statsData);
+        setSource(String(data?.source || '') || '');
+        setFetchedAt(String(data?.fetchedAt || '') || '');
       })
       .catch(() => {
         if (!cancelled) setError(true);
@@ -292,7 +295,8 @@ const ProductReviews = ({ query }) => {
 
   // Compute retailers list from actual reviews
   const retailers = useMemo(() => {
-    return [...new Set(reviews.map(r => r.retailer).filter(Boolean))];
+    if (!Array.isArray(reviews)) return [];
+    return [...new Set(reviews.map(r => r?.retailer).filter(Boolean))];
   }, [reviews]);
 
   // Filter and sort

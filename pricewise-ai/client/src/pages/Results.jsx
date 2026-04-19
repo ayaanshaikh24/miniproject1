@@ -60,13 +60,27 @@ const Results = () => {
     setPriceHistory([]);
 
     searchProductsLive(query, { fresh })
-      .then(resData => setData(resData))
-      .catch(() => setApiError(true))
+      .then(resData => {
+        // Ensure safe data access
+        const safeData = resData && typeof resData === 'object' ? resData : {};
+        setData(safeData);
+      })
+      .catch(err => {
+        console.error('[Results] Search error:', err);
+        setApiError(true);
+      })
       .finally(() => { setLoading(false); setIsRefreshing(false); });
 
     fetchPriceHistory(query)
-      .then(h => setPriceHistory(h))
-      .catch(() => {});
+      .then(h => {
+        // Ensure h is an array
+        const safeHistory = Array.isArray(h) ? h : [];
+        setPriceHistory(safeHistory);
+      })
+      .catch(err => {
+        console.error('[Results] Price history error:', err);
+        setPriceHistory([]);
+      });
   };
 
   useEffect(() => {
@@ -113,10 +127,10 @@ const Results = () => {
     );
   }
 
-  const allRetailers = data?.retailers || [];
-  const resultWarning = data?.warning || '';
-  const cachedAt = data?.cachedAt || '';
-  const bestDealPrice = data?.bestDealPrice;
+  const allRetailers = Array.isArray(data?.retailers) ? data.retailers : [];
+  const resultWarning = String(data?.warning || '');
+  const cachedAt = String(data?.cachedAt || '');
+  const bestDealPrice = typeof data?.bestDealPrice === 'number' ? data.bestDealPrice : null;
 
   // Include all retailers in results, including those without live prices
   const retailers = allRetailers;

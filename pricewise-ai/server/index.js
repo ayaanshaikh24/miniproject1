@@ -38,16 +38,184 @@ function looksLikeUrlInput(value = '') {
   return /^https?:\/\//i.test(text) || /^[\w.-]+\.[a-z]{2,}(?:\/\S*)?$/i.test(text);
 }
 
+const INTENT_NOISE_TOKENS = new Set([
+  'content', 'gmc', 'pla', 'sem', 'cid', 'ad', 'ads', 'click', 'amp',
+  'www', 'com', 'in', 'co', 'net', 'org', 'html', 'php', 'asp', 'aspx',
+  'product', 'products', 'item', 'items', 'dp', 'gp', 'ref', 'utm',
+  'source', 'medium', 'campaign', 'pid', 'sku',
+  'amazon', 'flipkart', 'myntra', 'meesho', 'snapdeal', 'tatacliq',
+  'jiomart', 'croma', 'reliancedigital', 'vijaysales', 'nykaa', 'ajio',
+]);
+
+const KNOWN_BRAND_TOKENS = new Set([
+  'apple', 'iphone', 'samsung', 'oneplus', 'nothing', 'xiaomi', 'redmi', 'mi',
+  'realme', 'oppo', 'vivo', 'motorola', 'moto', 'pixel', 'google', 'iqoo',
+  'nokia', 'infinix', 'tecno', 'poco', 'asus', 'lenovo', 'hp', 'dell', 'acer',
+  'sony', 'lg', 'panasonic', 'boat', 'jbl', 'noise', 'fireboltt',
+]);
+
+const PRODUCT_HINT_TOKENS = new Set([
+  'mobile', 'phone', 'smartphone', 'laptop', 'notebook', 'tablet', 'watch',
+  'earbuds', 'headphones', 'speaker', 'tv', 'television', 'monitor', 'camera',
+  'printer', 'keyboard', 'mouse', 'router', 'refrigerator', 'fridge',
+  'washing', 'machine', 'ac', 'air', 'conditioner', 'microwave', 'oven',
+]);
+
+function cleanIntentText(text = '') {
+  return String(text || '')
+    .replace(/\.[a-z]{2,4}$/i, ' ')
+    .replace(/[-_+/]+/g, ' ')
+    .replace(/[^a-z0-9 ]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function isIntentNoiseToken(token = '') {
+  const t = String(token || '').toLowerCase();
+  if (!t) return true;
+  if (INTENT_NOISE_TOKENS.has(t)) return true;
+  if (/^\d{5,}$/.test(t)) return true;
+  if (/^(?:20\d{2}|19\d{2})$/.test(t)) return true;
+  if (/^[a-f0-9]{16,}$/i.test(t)) return true;
+  if (/^[a-z0-9]{12,}$/i.test(t) && /\d/.test(t)) return true;
+  return false;
+}
+
+function normalizeIntentText(text = '') {
+  const tokens = cleanIntentText(text)
+    .split(' ')
+    .filter(Boolean)
+    .filter((token) => token.length > 1)
+    .filter((token) => !isIntentNoiseToken(token));
+
+  if (tokens.length === 0) return '';
+  return tokens.slice(0, 10).join(' ');
+}
+
+function hasModelSignalToken(token = '') {
+  const t = String(token || '').toLowerCase();
+  if (!t) return false;
+  if (/^[a-z]*\d+[a-z0-9-]*$/i.test(t)) return true;
+  if (/^\d+(?:gb|tb|mah|hz|inch|in|cm|mp|w)$/i.test(t)) return true;
+  return false;
+}
+
+function hasMeaningfulIntentSignal(token = '') {
+  const t = String(token || '').toLowerCase();
+  if (!t) return false;
+  if (KNOWN_BRAND_TOKENS.has(t)) return true;
+  if (PRODUCT_HINT_TOKENS.has(t)) return true;
+  if (hasModelSignalToken(t)) return true;
+  return false;
+}
+
+function shouldRejectLowSignalQuery(rawValue = '', normalizedQuery = '') {
+  const rawTokens = cleanIntentText(rawValue).split(' ').filter(Boolean);
+  const normalizedTokens = normalizeIntentText(normalizedQuery).split(' ').filter(Boolean);
+
+  if (normalizedTokens.length === 0) return true;
+  if (normalizedTokens.some((token) => hasMeaningfulIntentSignal(token))) return false;
+
+  if (normalizedTokens.length === 1 && PRODUCT_HINT_TOKENS.has(normalizedTokens[0])) {
+    return false;
+  }
+
+  const noisyOrIdCount = rawTokens.filter((token) => isIntentNoiseToken(token) || /^\d{4,}$/.test(token)).length;
+  if (rawTokens.length >= 3 && noisyOrIdCount >= Math.ceil(rawTokens.length * 0.5)) {
+    return true;
+  }
+
+  if (normalizedTokens.some((token) => token.length >= 18 && /\d/.test(token))) {
+    return true;
+  }
+
+  return false;
+}
+
+function extractBrandModelIntent(text = '') {
+  const tokens = cleanIntentText(text)
+    .split(' ')
+    .filter(Boolean)
+    .filter((token) => token.length > 1)
+    .filter((token) => !isIntentNoiseToken(token));
+
+  if (tokens.length === 0) return '';
+
+  const brandIndex = tokens.findIndex((token) => KNOWN_BRAND_TOKENS.has(token));
+  if (brandIndex >= 0) {
+    const picked = [tokens[brandIndex]];
+    for (let i = brandIndex + 1; i < tokens.length && picked.length < 7; i += 1) {
+      const token = tokens[i];
+      if (isIntentNoiseToken(token)) continue;
+      picked.push(token);
+    }
+    return picked.join(' ');
+  }
+
+  return tokens.slice(0, 6).join(' ');
+}
+
+function resolveSearchQuery(rawValue = '') {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return '';
+
+  const base = looksLikeUrlInput(raw)
+    ? (normalizeUrlToQuery(raw) || raw)
+    : raw;
+
+  const normalized = normalizeIntentText(base);
+  if (normalized) return normalized;
+
+  const fallback = extractBrandModelIntent(`${raw} ${base}`);
+  return fallback || base;
+}
+
 function normalizeUrlToQuery(value = '') {
   try {
     const raw = String(value || '').trim();
     const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
 
+    const decodeMaybe = (text = '') => {
+      try {
+        return decodeURIComponent(String(text || ''));
+      } catch {
+        return String(text || '');
+      }
+    };
+
+    const parseMaybeUrl = (text = '') => {
+      const t = String(text || '').trim();
+      if (!t) return null;
+      try {
+        return new URL(/^https?:\/\//i.test(t) ? t : `https://${t}`);
+      } catch {
+        return null;
+      }
+    };
+
+    const extractNestedSource = (urlObj) => {
+      const nestedParamKeys = [
+        'url', 'u', 'target', 'dest', 'destination', 'redirect', 'redirect_url',
+        'adurl', 'imgurl', 'r', 'ru', 'referrer', 'source_url',
+      ];
+      for (const key of nestedParamKeys) {
+        const valueText = decodeMaybe(urlObj.searchParams.get(key) || '');
+        const nested = parseMaybeUrl(valueText);
+        if (nested) return nested;
+      }
+      return null;
+    };
+
+    const sourceUrl = extractNestedSource(parsed) || parsed;
+
     const likelyIdToken = (token = '') => {
       const t = String(token || '').toLowerCase();
       if (!t) return true;
       if (/^(utm|ref|sr|spm|fbclid|gclid)/.test(t)) return true;
+      if (/^[0-9]{5,}$/.test(t)) return true;
       if (/^[a-f0-9]{16,}$/i.test(t)) return true;
+      if (/^[a-z0-9]{12,}$/i.test(t) && /\d/.test(t)) return true;
       if (/^(itm|pid|ppid|sku|spid)[a-z0-9]+$/i.test(t)) return true;
       // Keep common model tokens (often 8-16 chars with letters+digits),
       // but drop very long mixed IDs that are likely tracking data.
@@ -60,6 +228,8 @@ function normalizeUrlToQuery(value = '') {
       'dp', 'gp', 'p', 'ref', 'utm', 'source', 'medium', 'campaign', 'pid', 'sku',
       'amazon', 'flipkart', 'myntra', 'meesho', 'snapdeal', 'tatacliq', 'jiomart',
       'croma', 'reliancedigital', 'vijaysales', 'nykaa', 'ajio',
+      'content', 'mobile', 'gmc', 'pla', 'sem', 'cid', 'ad', 'ads', 'click',
+      'shopping', 'google', 'amp', 'html', 'php', 'asp', 'aspx',
     ]);
 
     const cleanText = (text) => String(text || '')
@@ -72,29 +242,36 @@ function normalizeUrlToQuery(value = '') {
 
     const preferredParamKeys = ['q', 'query', 'search', 'keyword', 'k', 'text', 'title', 'name', 'product'];
     const prioritizedParams = preferredParamKeys
-      .flatMap((key) => parsed.searchParams.getAll(key))
+      .flatMap((key) => sourceUrl.searchParams.getAll(key))
       .join(' ')
       .trim();
 
-    const fromParams = prioritizedParams || Array.from(parsed.searchParams.values()).join(' ');
-    const fromPath = decodeURIComponent(parsed.pathname || '')
+    const fromParams = prioritizedParams || Array.from(sourceUrl.searchParams.values()).join(' ');
+    const fromPath = decodeMaybe(sourceUrl.pathname || '')
       .split('/')
       .filter(Boolean)
       .join(' ');
 
-    const combined = cleanText(`${fromParams} ${fromPath}`);
+    const fromHost = String(sourceUrl.hostname || '')
+      .replace(/^www\./i, '')
+      .replace(/\.(com|in|co|net|org)$/i, ' ')
+      .replace(/[^a-z0-9 ]+/gi, ' ');
+
+    const combined = cleanText(`${fromParams} ${fromPath} ${fromHost}`);
     const tokens = combined
       .split(' ')
       .filter(Boolean)
       .filter((token) => {
         if (token.length <= 1) return false;
+        if (/^\d{4,}$/.test(token)) return false;
+        if (/^(?:20\d{2}|19\d{2})$/.test(token)) return false;
         if (tokenNoise.has(token)) return false;
         if (likelyIdToken(token)) return false;
         return true;
       });
 
     if (tokens.length === 0) return '';
-    return tokens.slice(0, 8).join(' ');
+    return tokens.slice(0, 10).join(' ');
   } catch {
       return '';
     }
@@ -107,6 +284,7 @@ function normalizeUrlToQuery(value = '') {
     'http://localhost:4173',
     process.env.FRONTEND_ORIGIN,
     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '',
+    process.env.NETLIFY_URL ? `https://${process.env.NETLIFY_URL}` : '',
     ...(String(process.env.ADDITIONAL_CORS_ORIGINS || '')
       .split(',')
       .map((origin) => origin.trim())
@@ -116,7 +294,11 @@ function normalizeUrlToQuery(value = '') {
   app.use(cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      if (corsOrigins.has(origin) || /^https:\/\/.*\.vercel\.app$/i.test(origin)) {
+      if (
+        corsOrigins.has(origin)
+        || /^https:\/\/.*\.vercel\.app$/i.test(origin)
+        || /^https:\/\/.*\.netlify\.app$/i.test(origin)
+      ) {
         return callback(null, true);
       }
       return callback(null, false);
@@ -568,6 +750,7 @@ async function fetchOfficialSerpapiFallback({ query, cleanedQuery, target, apiKe
       url: redirectUrl,
       image: picked.thumbnail || '',
       source: 'serpapi',
+      productId: getRapidApiProductId(picked),
     });
   } catch {
     return null;
@@ -638,6 +821,7 @@ async function fetchOfficialOrganicFallback({ query, cleanedQuery, target, apiKe
       url: redirectUrl,
       image: '',
       source: 'serpapi',
+      productId: getRapidApiProductId(picked),
     });
   } catch {
     return null;
@@ -901,9 +1085,45 @@ function getTrustLabel(score) {
   return 'Low';
 }
 
+function allowsStoreSpecificSocialProof(source = '') {
+  const normalized = String(source || '').toLowerCase();
+  // Scraper sources are retailer-page specific, while SerpAPI ratings are
+  // often product-level aggregates that appear identical across stores.
+  return normalized === 'scraper';
+}
+
 function buildRetailerSearchUrl(template, query) {
   const encodedQuery = encodeURIComponent(query || '').replace(/%20/g, '+');
   return String(template || '').replace('{query}', encodedQuery);
+}
+
+function extractProductIdFromUrl(value = '') {
+  try {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    const keys = ['product_id', 'pid', 'id', 'offer_id'];
+    for (const key of keys) {
+      const found = parsed.searchParams.get(key);
+      if (found && String(found).trim()) return String(found).trim();
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+function getRapidApiProductId(item = {}) {
+  const direct = String(item.product_id || item.productId || item.offer_id || '').trim();
+  if (direct) return direct;
+
+  const fromProductApi = extractProductIdFromUrl(item.serpapi_product_api || '');
+  if (fromProductApi) return fromProductApi;
+
+  const fromImmersiveApi = extractProductIdFromUrl(item.serpapi_immersive_product_api || '');
+  if (fromImmersiveApi) return fromImmersiveApi;
+
+  return '';
 }
 
 function computeTrustFactor({ store, url, rating, reviews, source, name, returnDays = 0, isOfficialStore = false }) {
@@ -937,12 +1157,23 @@ function computeTrustFactor({ store, url, rating, reviews, source, name, returnD
   return computed;
 }
 
-function createRetailerEntry({ name, price, store, rating, reviews, url, image, source, searchOnly = false, unavailableReason = '', stockStatus = 'Check Site', deliveryDate = 'Check on site', sellerName = '', isOfficialStore = false, couponText = '', returnDays = 0 }) {
+function createRetailerEntry({ name, price, store, rating, reviews, url, image, source, productId = '', searchOnly = false, unavailableReason = '', stockStatus = 'Check Site', deliveryDate = 'Check on site', sellerName = '', isOfficialStore = false, couponText = '', returnDays = 0 }) {
   const resolvedSeller = sellerName || store || 'Unknown';
   const resolvedOfficial = isOfficialStore || HIGH_TRUST_RETAILERS.has(normalizeStoreName(store));
-  const trustScore = computeTrustFactor({ store, url, rating, reviews, source, name, returnDays, isOfficialStore: resolvedOfficial });
+  const normalizedRating = allowsStoreSpecificSocialProof(source) ? (Number(rating) || 0) : 0;
+  const normalizedReviews = allowsStoreSpecificSocialProof(source) ? (Number(reviews) || 0) : 0;
+  const trustScore = computeTrustFactor({
+    store,
+    url,
+    rating: normalizedRating,
+    reviews: normalizedReviews,
+    source,
+    name,
+    returnDays,
+    isOfficialStore: resolvedOfficial,
+  });
   return {
-    name, price, store, rating, reviews, url, image, source, trustScore,
+    name, price, store, rating: normalizedRating, reviews: normalizedReviews, url, image, source, productId: String(productId || '').trim(), trustScore,
     trustLabel: getTrustLabel(trustScore),
     searchOnly, unavailableReason,
     stockStatus: stockStatus || 'Check Site',
@@ -1134,6 +1365,7 @@ function normalizeScraperResult(result) {
     url: result.url || '',
     image: result.image || '',
     source: 'scraper',
+    productId: result.product_id || result.productId || '',
     searchOnly: Boolean(result.search_only) || !hasNumericPrice,
     unavailableReason: !hasNumericPrice ? 'Live price unavailable right now' : '',
     stockStatus: result.stock_status || (hasNumericPrice ? 'In Stock' : 'Check Site'),
@@ -1148,8 +1380,15 @@ function normalizeScraperResult(result) {
 // ─── /api/search?q=iphone+13 ───────────────────────────────
 app.get('/api/search', async (req, res) => {
   const rawQuery = (req.query.q || '').trim();
-  const query = looksLikeUrlInput(rawQuery) ? (normalizeUrlToQuery(rawQuery) || rawQuery) : rawQuery;
+  const query = resolveSearchQuery(rawQuery);
   if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
+
+  if (shouldRejectLowSignalQuery(rawQuery, query)) {
+    return res.status(400).json({
+      error: 'Could not detect a valid product from this input. Please enter a clear product name or paste a cleaner product URL.',
+      normalizedQuery: query,
+    });
+  }
 
   // Compute relevance inputs upfront so cached payloads can be validated too.
   const queryForRelevance = stripPriceLanguage(query) || query;
@@ -1337,6 +1576,7 @@ app.get('/api/search', async (req, res) => {
               url: redirectUrl,
               image: matchingResult.thumbnail || '',
               source: 'serpapi-matched',
+              productId: getRapidApiProductId(matchingResult),
             }));
             console.log(`[serpapi-matched] ${targetRetailer.retailer} ✓ ₹${price}`);
           }
@@ -1378,6 +1618,7 @@ app.get('/api/search', async (req, res) => {
               url: redirectUrl,
               image: domainMatch.thumbnail || '',
               source: 'serpapi-domain-match',
+              productId: getRapidApiProductId(domainMatch),
             }));
             console.log(`[serpapi-domain-match] ${targetRetailer.retailer} ✓ ₹${price}`);
           }
@@ -1441,6 +1682,7 @@ app.get('/api/search', async (req, res) => {
         url: redirectUrl,
         image: item.thumbnail || '',
         source: 'serpapi',
+        productId: getRapidApiProductId(item),
       }));
     };
 
@@ -1634,6 +1876,35 @@ app.get('/api/search', async (req, res) => {
     }
 
     curatedRetailers = dedupeRetailers(curatedRetailers)
+      .filter((retailer, _idx, allRetailers) => {
+        const livePrices = allRetailers
+          .filter((entry) => !entry.searchOnly && Number(entry.price) > 0)
+          .map((entry) => Number(entry.price))
+          .sort((a, b) => a - b);
+
+        let liveMedianPrice = 0;
+        if (livePrices.length > 0) {
+          const mid = Math.floor(livePrices.length / 2);
+          liveMedianPrice = livePrices.length % 2 === 0
+            ? (livePrices[mid - 1] + livePrices[mid]) / 2
+            : livePrices[mid];
+        }
+
+        const currentPrice = Number(retailer.price) || 0;
+        // For phone-like queries, aggressively drop extreme low-price outliers
+        // that are usually cases/accessories mislabeled as the handset.
+        if (
+          isPhoneLikeQuery(queryForRelevance)
+          && currentPrice > 0
+          && liveMedianPrice > 0
+          && currentPrice < (liveMedianPrice * 0.45)
+          && !isAccessoryFocusedQuery(queryForRelevance)
+        ) {
+          return false;
+        }
+
+        return true;
+      })
       .filter((retailer) => {
         if (retailer.searchOnly || Number(retailer.price) <= 0 || retailer.trustScore < 30) return false;
         if (Number(retailer.price) < minPrice) return false;
@@ -1727,6 +1998,7 @@ app.get('/api/search', async (req, res) => {
       unavailableOfficialRetailers,
       query,
       name: query,
+      productId: finalRetailers.find((retailer) => String(retailer.productId || '').trim())?.productId || '',
       bestDealPrice: bestPrice < Infinity ? bestPrice : null,
       cachedAt: new Date().toISOString(),
     };
@@ -1736,7 +2008,7 @@ app.get('/api/search', async (req, res) => {
     if (hasAnyLivePrice(finalRetailers) && hasSufficientCoverage(query, finalRetailers)) {
       setCachedResult(query, responsePayload).catch(() => {});
     }
-    savePriceSnapshots(query, finalRetailers).catch(() => {});
+    savePriceSnapshots(query, finalRetailers, responsePayload.productId).catch(() => {});
 
     res.json(responsePayload);
   } catch (err) {
@@ -1783,9 +2055,10 @@ app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 app.get('/api/price-history', async (req, res) => {
   const query = (req.query.q || '').trim();
   const days = parseInt(req.query.days) || 30;
+  const productId = (req.query.product_id || req.query.productId || '').trim();
   if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
-  const history = await getPriceHistory(query, days);
-  res.json({ history, query });
+  const history = await getPriceHistory(query, days, productId);
+  res.json({ history, query, productId });
 });
 
 // ── Product Reviews (real-time) ──

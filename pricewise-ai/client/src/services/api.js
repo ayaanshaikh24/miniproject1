@@ -1,5 +1,5 @@
 export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
-const SEARCH_TIMEOUT_MS = 20000;
+const SEARCH_TIMEOUT_MS = 30000;
 
 function getSearchCacheKey(query) {
   return `pricewise:last-search:${String(query || '').trim().toLowerCase()}`;
@@ -38,8 +38,9 @@ function delay(ms) {
  */
 export async function searchProductsLive(query, { fresh = true } = {}) {
   let lastError;
+  const maxAttempts = 2;
 
-  for (let attempt = 1; attempt <= 1; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
 
@@ -47,7 +48,20 @@ export async function searchProductsLive(query, { fresh = true } = {}) {
       const url = `${API_BASE}/search?q=${encodeURIComponent(query)}${fresh ? '&fresh=1' : ''}`;
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timer);
-      if (!res.ok) throw new Error(`API error ${res.status}`);
+      if (!res.ok) {
+        let payload = null;
+        try {
+          payload = await res.json();
+        } catch {
+          payload = null;
+        }
+
+        const message = String(payload?.error || '').trim() || `API error ${res.status}`;
+        const error = new Error(message);
+        error.status = res.status;
+        error.payload = payload;
+        throw error;
+      }
       const payload = await res.json();
 
       // If backend is up but temporarily returns no live results, prefer last-good data.
@@ -72,7 +86,20 @@ export async function searchProductsLive(query, { fresh = true } = {}) {
     } catch (error) {
       clearTimeout(timer);
       lastError = error;
-      if (attempt < 1) await delay(400);
+
+      const status = Number(error?.status) || 0;
+      const message = String(error?.message || '').toLowerCase();
+      const isAbort = error?.name === 'AbortError';
+      const isNetwork = message.includes('failed to fetch') || message.includes('networkerror') || message.includes('network error');
+      const isRetryableStatus = status === 408 || status === 429 || status >= 500;
+      const shouldRetry = attempt < maxAttempts && (isAbort || isNetwork || isRetryableStatus || status === 0);
+
+      if (shouldRetry) {
+        await delay(800 * attempt);
+        continue;
+      }
+
+      break;
     }
   }
 
@@ -92,9 +119,12 @@ export async function searchProductsLive(query, { fresh = true } = {}) {
 /**
  * Fetch price history for a product (last 30 days).
  */
-export async function fetchPriceHistory(query, days = 30) {
+export async function fetchPriceHistory(query, days = 30, productId = '') {
   try {
-    const res = await fetch(`${API_BASE}/price-history?q=${encodeURIComponent(query)}&days=${days}`);
+    const productIdParam = String(productId || '').trim()
+      ? `&product_id=${encodeURIComponent(String(productId || '').trim())}`
+      : '';
+    const res = await fetch(`${API_BASE}/price-history?q=${encodeURIComponent(query)}&days=${days}${productIdParam}`);
     if (!res.ok) return [];
     const data = await res.json();
     return data.history || [];

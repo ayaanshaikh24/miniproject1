@@ -8,7 +8,7 @@ const DATA_DIR = join(__dirname, '..', 'data');
 const HISTORY_FILE = join(DATA_DIR, 'price_history.json');
 
 // In-memory cache of all price history
-let historyData = null; // { [queryKey]: [ { retailer, price, trust_score, stock_status, image_url, recorded_at } ] }
+let historyData = null; // { [queryKey]: [ { product_id, retailer, price, trust_score, stock_status, image_url, recorded_at } ] }
 let dirty = false;
 let saveTimer = null;
 
@@ -58,7 +58,7 @@ function schedulePersist() {
  * Save price snapshots for a query.
  * Works for ANY product type — no phone-only restrictions.
  */
-export async function savePriceSnapshots(query, retailers) {
+export async function savePriceSnapshots(query, retailers, productId = '') {
   if (!Array.isArray(retailers) || retailers.length === 0) return;
   const key = String(query || '').trim().toLowerCase();
   if (!key) return;
@@ -71,6 +71,7 @@ export async function savePriceSnapshots(query, retailers) {
     const snapshots = retailers
       .filter(r => typeof r.price === 'number' && r.price > 0 && !r.searchOnly)
       .map(r => ({
+        product_id: String(r.productId || productId || '').trim(),
         retailer: r.store || 'Unknown',
         price: r.price,
         trust_score: r.trustScore || 0,
@@ -98,9 +99,10 @@ export async function savePriceSnapshots(query, retailers) {
  * Get price history for a query.
  * Works for ANY product type.
  */
-export async function getPriceHistory(query, days = 30) {
+export async function getPriceHistory(query, days = 30, productId = '') {
   const key = String(query || '').trim().toLowerCase();
   if (!key) return [];
+  const normalizedProductId = String(productId || '').trim();
 
   try {
     const data = await loadHistory();
@@ -109,7 +111,9 @@ export async function getPriceHistory(query, days = 30) {
     const since = Date.now() - days * 24 * 60 * 60 * 1000;
     return entries.filter(row => {
       const ts = new Date(row.recorded_at).getTime();
-      return ts > since && Number(row.price) > 0;
+      if (!(ts > since && Number(row.price) > 0)) return false;
+      if (!normalizedProductId) return true;
+      return String(row.product_id || '').trim() === normalizedProductId;
     });
   } catch (err) {
     console.warn('[price-history] read error:', err.message);

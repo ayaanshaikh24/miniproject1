@@ -21,6 +21,7 @@ CREATE INDEX IF NOT EXISTS idx_product_cache_expires ON product_cache(expires_at
 -- ============================================================
 CREATE TABLE IF NOT EXISTS price_history (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  product_id TEXT,
   product_query TEXT NOT NULL,
   retailer TEXT NOT NULL,
   price NUMERIC NOT NULL,
@@ -31,8 +32,12 @@ CREATE TABLE IF NOT EXISTS price_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_price_history_query ON price_history(product_query);
+CREATE INDEX IF NOT EXISTS idx_price_history_product_id ON price_history(product_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_recorded ON price_history(recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_price_history_combo ON price_history(product_query, retailer);
+
+-- Backfill-safe migration for existing deployments
+ALTER TABLE price_history ADD COLUMN IF NOT EXISTS product_id TEXT;
 
 -- ============================================================
 -- 3. Price Alerts

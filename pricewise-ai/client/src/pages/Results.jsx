@@ -40,6 +40,7 @@ const Results = () => {
 
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(false);
+  const [apiErrorMessage, setApiErrorMessage] = useState('');
   const [data, setData] = useState(null);
   const [priceHistory, setPriceHistory] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -59,6 +60,7 @@ const Results = () => {
     if (slowSearchTimerRef.current) clearTimeout(slowSearchTimerRef.current);
     setLoading(true);
     setApiError(false);
+    setApiErrorMessage('');
     setData(null);
     setPriceHistory([]);
     setSlowSearch(false);
@@ -72,9 +74,21 @@ const Results = () => {
         // Ensure safe data access
         const safeData = resData && typeof resData === 'object' ? resData : {};
         setData(safeData);
+
+        const productId = String(safeData?.productId || '').trim();
+        return fetchPriceHistory(query, 30, productId)
+          .then(h => {
+            const safeHistory = Array.isArray(h) ? h : [];
+            setPriceHistory(safeHistory);
+          })
+          .catch(err => {
+            console.error('[Results] Price history error:', err);
+            setPriceHistory([]);
+          });
       })
       .catch(err => {
         console.error('[Results] Search error:', err);
+        setApiErrorMessage(String(err?.message || '').trim());
         setApiError(true);
       })
       .finally(() => {
@@ -87,16 +101,6 @@ const Results = () => {
         setIsRefreshing(false);
       });
 
-    fetchPriceHistory(query)
-      .then(h => {
-        // Ensure h is an array
-        const safeHistory = Array.isArray(h) ? h : [];
-        setPriceHistory(safeHistory);
-      })
-      .catch(err => {
-        console.error('[Results] Price history error:', err);
-        setPriceHistory([]);
-      });
   };
 
   useEffect(() => {
@@ -142,6 +146,9 @@ const Results = () => {
   }
 
   if (apiError || (data && data.error)) {
+    const visibleError = String(data?.error || apiErrorMessage || '').trim() || "Couldn't reach the search server.";
+    const showInputTip = visibleError.toLowerCase().includes('could not detect a valid product');
+
     return (
       <div className="min-h-screen flex flex-col items-center justify-center px-4">
         <div className="text-center max-w-md space-y-6">
@@ -149,7 +156,10 @@ const Results = () => {
             <WifiOff size={40} />
           </div>
           <h2 className="text-2xl font-black text-white">Search Failed</h2>
-          <p className="text-neutral-500 text-sm">{data?.error || "Couldn't reach the search server."}</p>
+          <p className="text-neutral-500 text-sm">{visibleError}</p>
+          {showInputTip && (
+            <p className="text-neutral-400 text-xs">Tip: Use a clean product title like "Samsung Galaxy S24" or paste a direct product page URL.</p>
+          )}
           <button onClick={() => navigate('/')} className="px-8 py-3 bg-white text-black rounded-2xl font-bold">Search Again</button>
         </div>
       </div>

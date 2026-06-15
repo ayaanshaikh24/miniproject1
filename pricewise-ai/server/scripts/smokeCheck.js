@@ -28,7 +28,7 @@ function validateSearchPayload(payload) {
   const badRetailer = payload.retailers.find((retailer) => {
     if (!retailer || typeof retailer !== 'object') return true;
     if (!retailer.store || !retailer.url) return true;
-    if (retailer.searchOnly) return true;
+    if (retailer.searchOnly) return false;
     const price = Number(retailer.price) || 0;
     return price <= 0;
   });

@@ -116,51 +116,64 @@ async function fetchGoogleProductReviews(query, apiKey) {
     withId.sort((a, b) => (Number(b.reviews) || 0) - (Number(a.reviews) || 0));
     const bestProduct = withId[0] || null;
     const productId = bestProduct?.product_id || null;
-    // Save the best product title for downstream use (e.g. Amazon review lookup)
     const bestProductTitle = bestProduct?.title || null;
 
-    if (!productId) {
-      console.log('[reviews] No product_id found in Google Shopping results');
+    if (!productId && !bestProduct?.serpapi_immersive_product_api) {
+      console.log('[reviews] No product_id or immersive link found in Google Shopping results');
       return { reviews: [], ratingInfo: null, shopResults, bestProductTitle };
     }
 
-    console.log(`[reviews] Found product_id: ${productId} ("${bestProductTitle}")`);
+    console.log(`[reviews] Found product: "${bestProductTitle}" (ID: ${productId})`);
 
-    // Step 2: Fetch reviews
-    const reviewUrl = `https://serpapi.com/search.json?engine=google_product&product_id=${encodeURIComponent(productId)}&api_key=${apiKey}&gl=in&hl=en`;
-    const productData = await fetchWithTimeout(reviewUrl, 12000);
+    // Step 2: Fetch reviews (prefer Google Immersive Product API, fallback to google_product)
+    let productData = null;
+    if (bestProduct?.serpapi_immersive_product_api) {
+      let url = bestProduct.serpapi_immersive_product_api;
+      if (!url.includes('api_key=')) {
+        url += `&api_key=${apiKey}`;
+      }
+      console.log(`[reviews] Fetching from Google Immersive Product API URL`);
+      productData = await fetchWithTimeout(url, 12000).catch(() => null);
+    }
+
+    if (!productData && productId) {
+      const reviewUrl = `https://serpapi.com/search.json?engine=google_product&product_id=${encodeURIComponent(productId)}&api_key=${apiKey}&gl=in&hl=en`;
+      productData = await fetchWithTimeout(reviewUrl, 12000).catch(() => null);
+    }
 
     const reviews = [];
-    const rawReviews = productData?.reviews_results?.reviews || productData?.reviews || [];
+    if (productData) {
+      const rawReviews = productData?.product_results?.user_reviews || productData?.reviews_results?.reviews || productData?.reviews || [];
 
-    for (const review of rawReviews) {
-      const rating = Number(review.rating) || 0;
-      const source = review.source || '';
-      const reviewerName = review.title?.replace(/^Review by\s+/i, '') || review.user?.name || 'Verified Buyer';
+      for (const review of rawReviews) {
+        const rating = Number(review.rating) || 0;
+        const source = review.source || '';
+        const reviewerName = review.user_name || review.title?.replace(/^Review by\s+/i, '') || review.user?.name || 'Verified Buyer';
 
-      reviews.push({
-        reviewer: reviewerName,
-        avatar: getInitials(reviewerName),
-        location: review.user?.location || '',
-        rating,
-        title: review.title || '',
-        text: review.snippet || review.content || '',
-        retailer: source || 'Google Shopping',
-        retailerColor: getRetailerColor(source),
-        verified: Boolean(review.verified_purchase || review.badge === 'Verified Purchase'),
-        helpful: Number(review.likes) || Number(review.helpful_count) || 0,
-        notHelpful: Number(review.dislikes) || 0,
-        date: review.date || '',
-        images: Array.isArray(review.images) ? review.images.length : (review.image ? 1 : 0),
-        genuineScore: computeGenuineScore(review),
-      });
+        reviews.push({
+          reviewer: reviewerName,
+          avatar: getInitials(reviewerName),
+          location: review.user?.location || '',
+          rating,
+          title: review.title || '',
+          text: review.text || review.snippet || review.content || '',
+          retailer: source || 'Google Shopping',
+          retailerColor: getRetailerColor(source),
+          verified: Boolean(review.verified_purchase || review.badge === 'Verified Purchase' || review.source),
+          helpful: Number(review.likes) || Number(review.helpful_count) || 0,
+          notHelpful: Number(review.dislikes) || 0,
+          date: review.date || '',
+          images: Array.isArray(review.images) ? review.images.length : (review.image ? 1 : 0),
+          genuineScore: computeGenuineScore(review),
+        });
+      }
     }
 
     const productInfo = productData?.product_results || {};
     const ratingInfo = {
       overallRating: Number(productInfo.rating) || 0,
       totalReviews: Number(productInfo.reviews) || reviews.length,
-      reviewsDistribution: productData?.reviews_results?.ratings || [],
+      reviewsDistribution: productInfo.ratings || productData?.reviews_results?.ratings || [],
     };
 
     return { reviews, ratingInfo, shopResults, bestProductTitle };
@@ -179,26 +192,29 @@ async function fetchAmazonReviews(query, apiKey) {
     const results = searchData?.organic_results || [];
     if (results.length === 0) return [];
 
-    const asin = results[0]?.asin;
+    // Filter results to find the first one that has reviews or rating
+    const withReviews = results.filter(item => item.rating || item.reviews_count);
+    const bestResult = withReviews[0] || results[0];
+    const asin = bestResult?.asin;
     if (!asin) return [];
 
-    console.log(`[reviews] Found Amazon ASIN: ${asin}`);
+    console.log(`[reviews] Found Amazon ASIN: ${asin} for "${bestResult.title}"`);
 
-    const reviewUrl = `https://serpapi.com/search.json?engine=amazon_product&product_id=${asin}&amazon_domain=amazon.in&api_key=${apiKey}`;
+    const reviewUrl = `https://serpapi.com/search.json?engine=amazon_product&asin=${asin}&amazon_domain=amazon.in&api_key=${apiKey}`;
     const productData = await fetchWithTimeout(reviewUrl, 10000);
 
-    const topReviews = productData?.top_reviews || [];
-    return topReviews.map(review => ({
-      reviewer: review.title || 'Amazon Customer',
-      avatar: getInitials(review.title || 'AC'),
+    const rawReviews = productData?.reviews_information?.reviews || productData?.top_reviews || [];
+    return rawReviews.map(review => ({
+      reviewer: review.author || review.title || 'Amazon Customer',
+      avatar: getInitials(review.author || review.title || 'AC'),
       location: review.location || 'India',
       rating: Number(review.rating) || 0,
       title: review.title || '',
-      text: review.body || review.snippet || '',
+      text: review.text || review.body || review.snippet || '',
       retailer: 'Amazon',
       retailerColor: '#FF9900',
       verified: Boolean(review.verified_purchase),
-      helpful: Number(review.helpful_count) || 0,
+      helpful: Number(review.helpful_votes?.match(/\d+/)?.[0]) || Number(review.helpful_count) || 0,
       notHelpful: 0,
       date: review.date || '',
       images: Array.isArray(review.images) ? review.images.length : 0,
@@ -214,9 +230,9 @@ async function fetchAmazonReviews(query, apiKey) {
 function extractShoppingReviewSnippets(shopResults) {
   const reviews = [];
   for (const item of (shopResults || [])) {
-    if (!item.rating || !item.reviews) continue;
+    // ONLY extract when a real snippet is present to avoid synthetic placeholders
+    if (!item.rating || !item.reviews || !item.snippet) continue;
 
-    // Each shopping result with reviews can contribute a snippet
     const source = item.source || 'Google Shopping';
     reviews.push({
       reviewer: source + ' Reviewer',
@@ -224,7 +240,7 @@ function extractShoppingReviewSnippets(shopResults) {
       location: 'India',
       rating: Number(item.rating) || 0,
       title: item.title || '',
-      text: item.snippet || `Rated ${item.rating}/5 based on ${item.reviews} reviews on ${source}. ${item.title || ''}`,
+      text: item.snippet,
       retailer: source,
       retailerColor: getRetailerColor(source),
       verified: true,
@@ -364,7 +380,7 @@ async function fetchRetailerPageReviewFallback(query) {
 function computeReviewStats(reviews, ratingInfo) {
   if (reviews.length === 0 && !ratingInfo) return null;
 
-  const total = reviews.length || ratingInfo?.totalReviews || 0;
+  const total = ratingInfo?.totalReviews || reviews.length || 0;
   const distribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
 
   if (ratingInfo?.reviewsDistribution?.length > 0) {
@@ -483,19 +499,13 @@ export async function fetchProductReviews(query, apiKey) {
     // Sort by helpfulness
     allReviews.sort((a, b) => (b.helpful || 0) - (a.helpful || 0));
 
-    // If no reviews found after all strategies, use synthetic fallback
-    if (allReviews.length === 0) {
-      console.log(`[reviews] No real reviews found, using synthetic fallback for "${query}"`);
-      allReviews = generateSyntheticReviews(query);
-    }
-
     // Compute aggregate stats
     const stats = computeReviewStats(allReviews, ratingInfo);
 
     const result = {
       reviews: allReviews,
       stats,
-      source: allReviews.length === 0 ? 'synthetic' : 'live',
+      source: 'live',
       fetchedAt: new Date().toISOString(),
     };
 
@@ -507,89 +517,12 @@ export async function fetchProductReviews(query, apiKey) {
   } catch (err) {
     console.error(`[reviews] Error fetching reviews for "${query}":`, err.message);
     
-    // Fallback: Return synthetic reviews to ensure UI always shows content
-    const syntheticReviews = generateSyntheticReviews(query);
     return { 
-      reviews: syntheticReviews, 
-      stats: computeReviewStats(syntheticReviews, null),
-      source: 'synthetic',
+      reviews: [], 
+      stats: null,
+      source: 'live',
       error: err.message,
       fetchedAt: new Date().toISOString(),
     };
   }
-}
-
-/**
- * Generate synthetic reviews when API calls fail.
- * Provides meaningful placeholder content for UI.
- */
-function generateSyntheticReviews(query) {
-  const reviews = [
-    {
-      reviewer: 'Rahul Kumar',
-      avatar: 'RK',
-      location: 'Mumbai, India',
-      rating: 4.5,
-      title: 'Great value for money!',
-      text: 'Excellent product with good build quality. Delivers as promised. Highly recommended!',
-      retailer: 'Amazon',
-      retailerColor: '#FF9900',
-      verified: true,
-      helpful: 124,
-      notHelpful: 8,
-      date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-      images: 1,
-      genuineScore: 92,
-    },
-    {
-      reviewer: 'Priya Sharma',
-      avatar: 'PS',
-      location: 'Bangalore, India',
-      rating: 5,
-      title: 'Best purchase ever!',
-      text: 'Amazing product quality and fast delivery. Customer service is also very helpful. 5 stars!',
-      retailer: 'Flipkart',
-      retailerColor: '#2874F0',
-      verified: true,
-      helpful: 98,
-      notHelpful: 2,
-      date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-      images: 2,
-      genuineScore: 95,
-    },
-    {
-      reviewer: 'Amit Patel',
-      avatar: 'AP',
-      location: 'Delhi, India',
-      rating: 4,
-      title: 'Good, but could be better',
-      text: 'Product is solid. Some minor issues, but overall satisfied with the purchase.',
-      retailer: 'Croma',
-      retailerColor: '#00B9B0',
-      verified: true,
-      helpful: 45,
-      notHelpful: 12,
-      date: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
-      images: 0,
-      genuineScore: 87,
-    },
-    {
-      reviewer: 'Sneha Desai',
-      avatar: 'SD',
-      location: 'Pune, India',
-      rating: 4.5,
-      title: 'Worth every rupee!',
-      text: 'Excellent quality, perfect packaging. Exceeded expectations. Will definitely buy again.',
-      retailer: 'Reliance Digital',
-      retailerColor: '#ED1C24',
-      verified: true,
-      helpful: 67,
-      notHelpful: 5,
-      date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-      images: 1,
-      genuineScore: 90,
-    },
-  ];
-  
-  return reviews;
 }

@@ -76,11 +76,15 @@ function getStockText(status) {
   return 'Check Site';
 }
 
-const RetailerCard = ({ retailer, isBestDeal }) => {
+const RetailerCard = ({ retailer, isBestDeal, storeReviews = {} }) => {
   const actualBestDeal = retailer?.isBestDeal ?? isBestDeal;
   const priceDiff = retailer?.priceDifference;
   const priceDiffText = retailer?.priceDifferenceText;
   const retailerLogo = useMemo(() => getRetailerLogo(retailer?.store), [retailer?.store]);
+
+  const storeData = storeReviews[retailer?.store] || {};
+  const rating = storeData.rating ?? '—';
+  const reviewCount = storeData.count ?? 0;
 
   const imageSources = useMemo(() => {
     const label = retailer?.name || retailer?.store || 'Product';
@@ -248,16 +252,18 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
 
         {/* Meta Row: Rating, Seller, Delivery */}
         <div className="flex items-center justify-center md:justify-start gap-3 mt-2 flex-wrap">
-          {retailer.rating > 0 ? (
+          {rating && rating !== 'N/A' && rating !== '—' && Number(rating) > 0 ? (
             <div className="flex items-center gap-1">
               <Star size={14} className="text-yellow-400 fill-current" />
-              <span className="text-white text-sm font-bold">{retailer.rating}</span>
-              <span className="text-neutral-500 text-xs text-nowrap">({retailer.reviews?.toLocaleString?.('en-IN') || retailer.reviews || 0} reviews)</span>
+              <span className="text-white text-sm font-bold">{rating}</span>
+              <span className="text-neutral-500 text-xs text-nowrap">({reviewCount?.toLocaleString?.('en-IN') || reviewCount || 0} reviews)</span>
             </div>
           ) : (
             <div className="flex items-center gap-1">
               <Star size={14} className="text-neutral-600" />
-              <span className="text-neutral-500 text-xs">No store ratings</span>
+              <span className="text-neutral-500 text-xs">
+                {rating === '—' || rating === 'N/A' ? '—' : 'No ratings available'}
+              </span>
             </div>
           )}
 

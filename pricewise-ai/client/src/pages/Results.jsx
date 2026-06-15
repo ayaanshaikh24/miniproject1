@@ -43,6 +43,7 @@ const Results = () => {
   const [apiErrorMessage, setApiErrorMessage] = useState('');
   const [data, setData] = useState(null);
   const [priceHistory, setPriceHistory] = useState([]);
+  const [storeReviews, setStoreReviews] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [slowSearch, setSlowSearch] = useState(false);
   const slowSearchTimerRef = useRef(null);
@@ -113,6 +114,31 @@ const Results = () => {
       }
     };
   }, [query, doSearch]);
+
+  const fetchReviewsForStore = useCallback((store) => {
+    const rating = store.rating 
+      ?? store.product_rating 
+      ?? store.store_rating 
+      ?? store.ratingValue 
+      ?? null;
+    const count = store.reviews 
+      ?? store.review_count 
+      ?? store.num_reviews 
+      ?? 0;
+
+    setStoreReviews((prev) => ({
+      ...prev,
+      [store.store]: { rating, count },
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (data?.retailers) {
+      data.retailers.forEach((store) => {
+        fetchReviewsForStore(store);
+      });
+    }
+  }, [data, fetchReviewsForStore]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -334,6 +360,7 @@ const Results = () => {
                   isUnavailable: Boolean(retailer.searchOnly || !retailer.price),
                 }}
                 isBestDeal={retailer.isBestDeal}
+                storeReviews={storeReviews}
               />
             ))}
           </div>

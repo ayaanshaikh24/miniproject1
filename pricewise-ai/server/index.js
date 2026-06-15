@@ -745,8 +745,15 @@ async function fetchOfficialSerpapiFallback({ query, cleanedQuery, target, apiKe
       name: picked.title || query,
       price: extractedPrice,
       store: picked.source || target.retailer,
-      rating: Number(picked.rating) || 0,
-      reviews: Number(picked.reviews) || 0,
+      rating: picked.rating 
+        ?? picked.product_rating 
+        ?? picked.store_rating 
+        ?? picked.ratingValue 
+        ?? null,
+      reviews: picked.reviews 
+        ?? picked.review_count 
+        ?? picked.num_reviews 
+        ?? 0,
       url: redirectUrl,
       image: picked.thumbnail || '',
       source: 'serpapi',
@@ -801,8 +808,17 @@ async function fetchOfficialOrganicFallback({ query, cleanedQuery, target, apiKe
     const extractedPrice = extractOrganicPrice(picked);
     if (!extractedPrice) return null;
 
-    const rating = Number(picked?.rich_snippet?.top?.detected_extensions?.rating) || 0;
-    const reviews = Number(picked?.rich_snippet?.top?.detected_extensions?.reviews) || 0;
+    const rating = picked?.rich_snippet?.top?.detected_extensions?.rating 
+      ?? picked.rating 
+      ?? picked.product_rating 
+      ?? picked.store_rating 
+      ?? picked.ratingValue 
+      ?? null;
+    const reviews = picked?.rich_snippet?.top?.detected_extensions?.reviews 
+      ?? picked.reviews 
+      ?? picked.review_count 
+      ?? picked.num_reviews 
+      ?? 0;
     const redirectUrl = rememberRedirectTarget({
       store: target.retailer,
       name: picked.title || query,
@@ -1087,10 +1103,7 @@ function getTrustLabel(score) {
 
 function allowsStoreSpecificSocialProof(source = '') {
   const normalized = String(source || '').toLowerCase();
-  // Only scraper sources provide genuine store-specific ratings.
-  // SerpAPI ratings are product-level aggregates (e.g. iPhone 15 = 4.7★ / 56K reviews)
-  // shared identically across all stores — showing them per-store is misleading.
-  return normalized === 'scraper';
+  return normalized === 'scraper' || normalized.startsWith('serpapi');
 }
 
 function buildRetailerSearchUrl(template, query) {
@@ -1572,8 +1585,15 @@ app.get('/api/search', async (req, res) => {
               name: (matchingResult.title || query).substring(0, 80),
               price,
               store: targetRetailer.retailer,
-              rating: matchingResult.rating || 0,
-              reviews: matchingResult.reviews || 0,
+              rating: matchingResult.rating 
+                ?? matchingResult.product_rating 
+                ?? matchingResult.store_rating 
+                ?? matchingResult.ratingValue 
+                ?? null,
+              reviews: matchingResult.reviews 
+                ?? matchingResult.review_count 
+                ?? matchingResult.num_reviews 
+                ?? 0,
               url: redirectUrl,
               image: matchingResult.thumbnail || '',
               source: 'serpapi-matched',
@@ -1614,8 +1634,15 @@ app.get('/api/search', async (req, res) => {
               name: (domainMatch.title || query).substring(0, 100),
               price,
               store: targetRetailer.retailer,
-              rating: Number(domainMatch.rating) || 0,
-              reviews: Number(domainMatch.reviews) || 0,
+              rating: domainMatch.rating 
+                ?? domainMatch.product_rating 
+                ?? domainMatch.store_rating 
+                ?? domainMatch.ratingValue 
+                ?? null,
+              reviews: domainMatch.reviews 
+                ?? domainMatch.review_count 
+                ?? domainMatch.num_reviews 
+                ?? 0,
               url: redirectUrl,
               image: domainMatch.thumbnail || '',
               source: 'serpapi-domain-match',
@@ -1675,12 +1702,22 @@ app.get('/api/search', async (req, res) => {
         site: hostFromUrl(directUrl),
       });
 
+      const rating = item.rating 
+        ?? item.product_rating 
+        ?? item.store_rating 
+        ?? item.ratingValue 
+        ?? null;
+      const reviews = item.reviews 
+        ?? item.review_count 
+        ?? item.num_reviews 
+        ?? 0;
+
       retailers.push(createRetailerEntry({
         name,
         price: priceStr || '',
         store,
-        rating: item.rating || 0,
-        reviews: item.reviews || 0,
+        rating,
+        reviews,
         url: redirectUrl,
         image: item.thumbnail || '',
         source: 'serpapi',
@@ -1994,6 +2031,30 @@ app.get('/api/search', async (req, res) => {
 
       finalRetailers = [...finalRetailers, ...backfillPlaceholders];
     }
+
+    // Deduplicate ratings: if the same rating & review count is shared by more than one retailer,
+    // it's a product-level aggregate rather than store-specific, so reset it to null/0.
+    const ratingCounts = {};
+    finalRetailers.forEach((r) => {
+      if (r.rating > 0) {
+        const key = `${r.rating}|${r.reviews}`;
+        ratingCounts[key] = (ratingCounts[key] || 0) + 1;
+      }
+    });
+
+    finalRetailers = finalRetailers.map((r) => {
+      if (r.rating > 0) {
+        const key = `${r.rating}|${r.reviews}`;
+        if (ratingCounts[key] > 1) {
+          return {
+            ...r,
+            rating: 0,
+            reviews: 0,
+          };
+        }
+      }
+      return r;
+    });
 
     const responsePayload = {
       retailers: finalRetailers,

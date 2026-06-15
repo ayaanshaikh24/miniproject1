@@ -1087,8 +1087,9 @@ function getTrustLabel(score) {
 
 function allowsStoreSpecificSocialProof(source = '') {
   const normalized = String(source || '').toLowerCase();
-  // Scraper sources are retailer-page specific, while SerpAPI ratings are
-  // often product-level aggregates that appear identical across stores.
+  // Only scraper sources provide genuine store-specific ratings.
+  // SerpAPI ratings are product-level aggregates (e.g. iPhone 15 = 4.7★ / 56K reviews)
+  // shared identically across all stores — showing them per-store is misleading.
   return normalized === 'scraper';
 }
 
@@ -1626,11 +1627,14 @@ app.get('/api/search', async (req, res) => {
       }
     }
 
-    // Backfill missing image/rating from shopping results for core retailers.
+    // Backfill missing image from shopping results for core retailers.
+    // NOTE: We intentionally do NOT backfill rating/reviews here because
+    // SerpAPI shopping ratings are product-level aggregates (same for all stores),
+    // not store-specific ratings.
     for (const retailer of retailers) {
       const target = CORE_RETAILER_TARGETS.find((entry) => normalizeStoreName(entry.retailer) === normalizeStoreName(retailer.store));
       if (!target) continue;
-      if (retailer.image && retailer.rating) continue;
+      if (retailer.image) continue;
 
       const enrich = shoppingResults.find((item) => {
         const link = String(item.link || item.product_link || '');
@@ -1640,8 +1644,6 @@ app.get('/api/search', async (req, res) => {
 
       if (!enrich) continue;
       if (!retailer.image && enrich.thumbnail) retailer.image = enrich.thumbnail;
-      if (!retailer.rating && Number(enrich.rating) > 0) retailer.rating = Number(enrich.rating);
-      if (!retailer.reviews && Number(enrich.reviews) > 0) retailer.reviews = Number(enrich.reviews);
       if (retailer.name === query && enrich.title) retailer.name = enrich.title;
     }
 

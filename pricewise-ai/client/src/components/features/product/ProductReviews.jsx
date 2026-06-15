@@ -62,17 +62,25 @@ const GenuineBadge = ({ score }) => {
 
 function getTimeAgo(dateStr) {
   if (!dateStr) return '';
+  const trimmed = String(dateStr).trim();
+  // If the date is already a relative string (e.g. "2 years ago", "3 months ago"), return as-is
+  if (/\d+\s+(second|minute|hour|day|week|month|year)s?\s+ago/i.test(trimmed)) return trimmed;
+  if (/^(today|yesterday|just now)$/i.test(trimmed)) return trimmed;
   try {
-    const diff = Date.now() - new Date(dateStr).getTime();
+    const parsed = new Date(trimmed);
+    if (isNaN(parsed.getTime())) return trimmed; // Invalid date — return original string
+    const diff = Date.now() - parsed.getTime();
+    if (diff < 0) return trimmed; // Future date — return original string
     const days = Math.floor(diff / 86400000);
     if (days < 1) return 'Today';
-    if (days < 7) return `${days} days ago`;
+    if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`;
     if (days < 30) return `${Math.floor(days / 7)} week${Math.floor(days / 7) > 1 ? 's' : ''} ago`;
     const months = Math.floor(days / 30);
     if (months < 12) return `${months} month${months > 1 ? 's' : ''} ago`;
-    return `${Math.floor(months / 12)} year${Math.floor(months / 12) > 1 ? 's' : ''} ago`;
+    const years = Math.floor(months / 12);
+    return `${years} year${years > 1 ? 's' : ''} ago`;
   } catch {
-    return dateStr;
+    return trimmed;
   }
 }
 

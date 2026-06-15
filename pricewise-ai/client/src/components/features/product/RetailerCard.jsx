@@ -248,11 +248,18 @@ const RetailerCard = ({ retailer, isBestDeal }) => {
 
         {/* Meta Row: Rating, Seller, Delivery */}
         <div className="flex items-center justify-center md:justify-start gap-3 mt-2 flex-wrap">
-          <div className="flex items-center gap-1">
-            <Star size={14} className="text-yellow-400 fill-current" />
-            <span className="text-white text-sm font-bold">{retailer.rating || 'N/A'}</span>
-            <span className="text-neutral-500 text-xs text-nowrap">({retailer.reviews || 0} reviews)</span>
-          </div>
+          {retailer.rating > 0 ? (
+            <div className="flex items-center gap-1">
+              <Star size={14} className="text-yellow-400 fill-current" />
+              <span className="text-white text-sm font-bold">{retailer.rating}</span>
+              <span className="text-neutral-500 text-xs text-nowrap">({retailer.reviews?.toLocaleString?.('en-IN') || retailer.reviews || 0} reviews)</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <Star size={14} className="text-neutral-600" />
+              <span className="text-neutral-500 text-xs">No store ratings</span>
+            </div>
+          )}
 
           {retailer.sellerName && retailer.sellerName !== retailer.store && (
             <div className="flex items-center gap-1 text-xs text-neutral-400">

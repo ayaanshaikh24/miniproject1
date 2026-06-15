@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Search, Link as LinkIcon, Loader2, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+// eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
 
 const URL_QUERY_KEYS = ['k', 'q', 'query', 'search', 'keyword', 'product', 'productname', 'name', 'title'];

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Star, Shield, Filter, MessageSquare, CheckCircle, AlertTriangle, User, ExternalLink } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from 'recharts';
-import { motion } from 'framer-motion';
 
 const ReviewPanel = ({ reviews, aiSummary, pros, cons, expertReviews }) => {
   const [showAll, setShowAll] = useState(false);

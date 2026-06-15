@@ -1,5 +1,6 @@
 import React from 'react';
 import { Award, Zap, TrendingDown, ShieldCheck, ExternalLink } from 'lucide-react';
+// eslint-disable-next-line no-unused-vars
 import { motion } from 'framer-motion';
 
 const RecommendationBanner = ({ bestOverall, bestBudget, priceSignal }) => {

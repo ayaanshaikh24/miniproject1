@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { AlertCircle, WifiOff, Loader2, Bell, Clock, RefreshCw, ExternalLink } from 'lucide-react';
 
@@ -55,7 +55,7 @@ const Results = () => {
   // Price Alert modal
   const [alertModalOpen, setAlertModalOpen] = useState(false);
 
-  const doSearch = (fresh = false) => {
+  const doSearch = useCallback((fresh = false) => {
     if (!query) { setLoading(false); return; }
     if (slowSearchTimerRef.current) clearTimeout(slowSearchTimerRef.current);
     setLoading(true);
@@ -101,9 +101,10 @@ const Results = () => {
         setIsRefreshing(false);
       });
 
-  };
+  }, [query]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     doSearch(false);
     return () => {
       if (slowSearchTimerRef.current) {
@@ -111,7 +112,7 @@ const Results = () => {
         slowSearchTimerRef.current = null;
       }
     };
-  }, [query]);
+  }, [query, doSearch]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);

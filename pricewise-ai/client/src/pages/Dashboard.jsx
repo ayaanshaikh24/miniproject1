@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bookmark, Bell, History, Settings, Trash2, ArrowUpRight, CheckCircle } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { wishlist } from '../constants/mockData';
 import ProductCard from '../components/features/product/ProductCard';
 import { supabase } from '../utils/supabase';
@@ -8,7 +8,7 @@ import { getStoredAlerts, removePriceAlert, subscribeToAlerts } from '../utils/a
 
 const Dashboard = () => {
   const [activeTab, setActiveTab] = useState('wishlist');
-  const [alerts, setAlerts] = useState(() => getStoredAlerts());
+  const [alerts, setAlerts] = useState(getStoredAlerts);
   const [wishlistItems, setWishlistItems] = useState(() => {
     try {
       const raw = localStorage.getItem('pw-wishlist');
@@ -21,9 +21,7 @@ const Dashboard = () => {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    setAlerts(getStoredAlerts());
     const unsubscribe = subscribeToAlerts(setAlerts);
-
     return () => unsubscribe();
   }, []);
 

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { ExternalLink, Star, Award, Package, Truck, ShieldCheck, Tag } from 'lucide-react';
-import { motion } from 'framer-motion';
 import TrustScore from '../pricing/TrustScore';
 import { API_BASE } from '../../../services/api';
 

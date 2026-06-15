@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ShoppingCart, Star, Heart } from 'lucide-react';
+// eslint-disable-next-line no-unused-vars
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 
@@ -27,8 +28,9 @@ const ProductCard = ({ product, isWishlisted = false, onToggleWishlist }) => {
   const [imageIndex, setImageIndex] = useState(0);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setImageIndex(0);
-  }, [product.id, product.image, product.name]);
+  }, [product.id, product.image, product.name, imageSources.length]);
 
   const handleClick = () => {
     navigate(`/results?q=${encodeURIComponent(product.name)}`);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+// eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Star,
@@ -251,7 +252,7 @@ const ReviewSkeleton = () => (
 const ProductReviews = ({ query }) => {
   const [reviews, setReviews] = useState([]);
   const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!query);
   const [error, setError] = useState(false);
   const [source, setSource] = useState('');
   const [fetchedAt, setFetchedAt] = useState('');
@@ -262,11 +263,10 @@ const ProductReviews = ({ query }) => {
 
   // Fetch real-time reviews
   useEffect(() => {
-    if (!query) {
-      setLoading(false);
-      return;
-    }
+    if (!query) return;
+    
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(false);
     setReviews([]);

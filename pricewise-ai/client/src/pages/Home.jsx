@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from 'framer-motion';
 import { Shield, Zap, Sparkles, CheckCircle, ArrowRight, Star, Search, TrendingDown, Eye, Lock, Box, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlowingEffect } from '../components/ui/glowing-effect';
@@ -39,7 +38,7 @@ const RecentProductCard = ({ product, onClick }) => {
     setImageIndex(0);
     setLogoIndex(0);
     setShowLogoImage(logoSources.length > 0);
-  }, [product.name, product.image]);
+  }, [product.name, product.image, logoSources.length]);
 
   const handleImageError = () => {
     setImageIndex((prev) => (prev < imageSources.length - 1 ? prev + 1 : prev));

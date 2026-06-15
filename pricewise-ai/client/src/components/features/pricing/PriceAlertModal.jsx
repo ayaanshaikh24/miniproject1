@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Target, Mail, X, CheckCircle } from 'lucide-react';
+// eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { createPriceAlertAPI } from '../../../services/api';
@@ -42,7 +43,7 @@ const PriceAlertModal = ({ isOpen, onClose, currentPrice, productName, productQu
         setSubmitted(false);
         setEmail('');
       }, 2000);
-    } catch (err) {
+    } catch {
       toast.error('Failed to save alert. Try again.');
     } finally {
       setSubmitting(false);

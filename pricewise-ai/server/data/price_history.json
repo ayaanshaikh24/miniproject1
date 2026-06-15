@@ -6455,6 +6455,69 @@
       "stock_status": "Check Site",
       "image_url": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcTxowOce1ZTBQQBQAWsrgHoxh1u6u7oAhCsfy0FtGKGSkeu1LgA9FOImApVwUbhR594w3R2UIWD",
       "recorded_at": "2026-06-15T12:50:12.833Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Flipkart",
+      "price": 54900,
+      "trust_score": 85,
+      "stock_status": "Check Site",
+      "image_url": "",
+      "recorded_at": "2026-06-15T12:58:07.250Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Reliance Digital",
+      "price": 55900,
+      "trust_score": 85,
+      "stock_status": "Check Site",
+      "image_url": "",
+      "recorded_at": "2026-06-15T12:58:07.250Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Vijay Sales",
+      "price": 57900,
+      "trust_score": 85,
+      "stock_status": "Check Site",
+      "image_url": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcR4870JPuGXRs444WxvgG8F8QqxLDEecSHNDEFidsNADLifDT4ctLVfOohs6AayfPAQKmethmv1ybyzgvnvBxsAX04zg0mk33uOFT7D5af5BnVWjXQy_v_S",
+      "recorded_at": "2026-06-15T12:58:07.250Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Croma",
+      "price": 134900,
+      "trust_score": 85,
+      "stock_status": "Check Site",
+      "image_url": "",
+      "recorded_at": "2026-06-15T12:58:07.250Z"
+    },
+    {
+      "product_id": "5949101389128817525",
+      "retailer": "iNvent - Apple Premium Reseller",
+      "price": 58900,
+      "trust_score": 66,
+      "stock_status": "Check Site",
+      "image_url": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcStLuQbvZoByc3LFHXNZs22_zUghXs9xM_qEj3iSdsqmeG_XZG_",
+      "recorded_at": "2026-06-15T12:58:07.250Z"
+    },
+    {
+      "product_id": "2134137233408673828",
+      "retailer": "Imagine Apple Premium Reseller",
+      "price": 59900,
+      "trust_score": 66,
+      "stock_status": "Check Site",
+      "image_url": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcTxowOce1ZTBQQBQAWsrgHoxh1u6u7oAhCsfy0FtGKGSkeu1LgA9FOImApVwUbhR594w3R2UIWD",
+      "recorded_at": "2026-06-15T12:58:07.250Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Bajaj Markets X ONDC",
+      "price": 59900,
+      "trust_score": 66,
+      "stock_status": "Check Site",
+      "image_url": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcQBEmAnRXAa9y2c2zr5dwPEJ0vMKxw2IM5E56868VE2pZjo5GoGr4E1Zwy7s9vFyFPX-QCo70emD9Fjcma0Z9uNv6qOHZN7paqW1GikpLQ",
+      "recorded_at": "2026-06-15T12:58:07.250Z"
     }
   ],
   "oneplus 12": [

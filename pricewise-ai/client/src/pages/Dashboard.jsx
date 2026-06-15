@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bookmark, Bell, History, Settings, Trash2, ArrowUpRight, CheckCircle } from 'lucide-react';
-import { AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { wishlist } from '../constants/mockData';
 import ProductCard from '../components/features/product/ProductCard';
 import { supabase } from '../utils/supabase';

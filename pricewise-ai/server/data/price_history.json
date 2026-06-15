@@ -5879,6 +5879,42 @@
       "stock_status": "Check Site",
       "image_url": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcQNvUBgWD1ZmBGhmqxIPGM22i5JWHnvZsjIQ3vYKPNG0G_H1yVmv-mDjQvzqW-qy8j-XJ2BiGE",
       "recorded_at": "2026-04-19T09:34:39.606Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Flipkart",
+      "price": 54900,
+      "trust_score": 85,
+      "stock_status": "Check Site",
+      "image_url": "",
+      "recorded_at": "2026-06-15T12:46:56.431Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Reliance Digital",
+      "price": 55900,
+      "trust_score": 85,
+      "stock_status": "Check Site",
+      "image_url": "",
+      "recorded_at": "2026-06-15T12:46:56.431Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Vijay Sales",
+      "price": 57900,
+      "trust_score": 85,
+      "stock_status": "Check Site",
+      "image_url": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcR4870JPuGXRs444WxvgG8F8QqxLDEecSHNDEFidsNADLifDT4ctLVfOohs6AayfPAQKmethmv1ybyzgvnvBxsAX04zg0mk33uOFT7D5af5BnVWjXQy_v_S",
+      "recorded_at": "2026-06-15T12:46:56.431Z"
+    },
+    {
+      "product_id": "12768653927672354796",
+      "retailer": "Bajaj Markets X ONDC",
+      "price": 59900,
+      "trust_score": 66,
+      "stock_status": "Check Site",
+      "image_url": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcQBEmAnRXAa9y2c2zr5dwPEJ0vMKxw2IM5E56868VE2pZjo5GoGr4E1Zwy7s9vFyFPX-QCo70emD9Fjcma0Z9uNv6qOHZN7paqW1GikpLQ",
+      "recorded_at": "2026-06-15T12:46:56.431Z"
     }
   ],
   "oneplus 12": [

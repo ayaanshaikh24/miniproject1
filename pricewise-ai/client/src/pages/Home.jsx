@@ -1,6 +1,7 @@
 import React from 'react';
 import { Shield, Zap, Sparkles, CheckCircle, ArrowRight, Star, Search, TrendingDown, Eye, Lock, Box, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { GlowingEffect } from '../components/ui/glowing-effect';
 import { cn } from '../utils/utils';
 import SearchBar from '../components/common/SearchBar';
